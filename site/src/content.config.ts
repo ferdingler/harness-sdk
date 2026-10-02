@@ -253,6 +253,8 @@ export const announcementSchema = z.object({
   linkText: z.string().default('Learn more'),
   // Shown for ANNOUNCEMENT_DAYS from this date; bump it when the content is updated.
   date: eventDate,
+  // Last day shown, overriding the ANNOUNCEMENT_DAYS window.
+  expires: eventDate.optional(),
 })
 export type Announcement = z.infer<typeof announcementSchema>
 

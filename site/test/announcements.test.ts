@@ -15,6 +15,13 @@ describe('announcementExpires', () => {
     expect(ANNOUNCEMENT_DAYS).toBe(14)
     expect(announcementExpires(makeAnnouncement('2026-10-01'))).toBe('2026-10-14')
   })
+
+  it('uses expires when set', () => {
+    const announcement = { ...makeAnnouncement('2026-10-01'), expires: new Date('2026-10-19T00:00:00Z') }
+    expect(announcementExpires(announcement)).toBe('2026-10-19')
+    expect(activeAnnouncement([announcement], day('2026-10-19'))).toBe(announcement)
+    expect(activeAnnouncement([announcement], day('2026-10-20'))).toBeUndefined()
+  })
 })
 
 describe('activeAnnouncement', () => {

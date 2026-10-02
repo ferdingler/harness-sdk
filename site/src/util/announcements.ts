@@ -8,6 +8,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000
 
 /** Last day (YYYY-MM-DD, UTC) the announcement is shown. */
 export function announcementExpires(announcement: Announcement): string {
+  if (announcement.expires) return toIsoDate(announcement.expires)
   return toIsoDate(new Date(announcement.date.getTime() + (ANNOUNCEMENT_DAYS - 1) * MS_PER_DAY))
 }
 
