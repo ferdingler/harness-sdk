@@ -247,15 +247,20 @@ export const eventSchema = z
   })
 export type LearnEvent = z.infer<typeof eventSchema>
 
-export const announcementSchema = z.object({
-  title: z.string(),
-  href: z.string(),
-  linkText: z.string().default('Learn more'),
-  // Shown for ANNOUNCEMENT_DAYS from this date; bump it when the content is updated.
-  date: eventDate,
-  // Last day shown, overriding the ANNOUNCEMENT_DAYS window.
-  expires: eventDate.optional(),
-})
+export const announcementSchema = z
+  .object({
+    title: z.string(),
+    href: z.string(),
+    linkText: z.string().default('Learn more'),
+    // Shown for ANNOUNCEMENT_DAYS from this date; bump it when the content is updated.
+    date: eventDate,
+    // Last day shown, overriding the ANNOUNCEMENT_DAYS window.
+    expires: eventDate.optional(),
+  })
+  .refine((a) => a.expires === undefined || a.expires >= a.date, {
+    message: 'expires must not be before date',
+    path: ['expires'],
+  })
 export type Announcement = z.infer<typeof announcementSchema>
 
 export const collections = {

@@ -57,8 +57,19 @@ describe('activeAnnouncement', () => {
 
 describe('announcementSchema', () => {
   it('defaults linkText and rejects invalid dates', () => {
-    expect(announcementSchema.parse({ title: 't', href: '/x/', date: '2026-10-01' }).linkText).toBe('Learn more')
+    expect(announcementSchema.parse({ title: 't', href: '/x/', date: '2026-10-01' })).toEqual({
+      title: 't',
+      href: '/x/',
+      linkText: 'Learn more',
+      date: new Date('2026-10-01T00:00:00Z'),
+    })
     expect(announcementSchema.safeParse({ title: 't', href: '/x/', date: '2026-02-30' }).success).toBe(false)
+  })
+
+  it('rejects expires before date', () => {
+    const result = announcementSchema.safeParse({ title: 't', href: '/x/', date: '2026-10-05', expires: '2026-10-04' })
+    expect(result.success).toBe(false)
+    expect(result.error?.issues[0]?.path).toEqual(['expires'])
   })
 
   it('validates every announcement in the collection', async () => {

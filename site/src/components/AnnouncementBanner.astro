@@ -15,7 +15,11 @@ const href = announcement && (isExternal ? announcement.href : pathWithBase(anno
   announcement && (
     <>
       <aside class="announcement" aria-label="Announcement" data-expires={announcementExpires(announcement)}>
-        <a class="announcement__link" href={href} {...(isExternal && { target: '_blank', rel: 'noopener' })}>
+        <a class="announcement__link" href={href} {...(isExternal && {
+            target: '_blank',
+            rel: 'noopener',
+            'aria-label': `${announcement.title}: ${announcement.linkText} (opens in a new tab)`,
+          })}>
           <span class="announcement__frog" set:html={frog} aria-hidden="true" />
           <span class="announcement__title">{announcement.title}</span>
           <span class="announcement__cta">
@@ -27,8 +31,8 @@ const href = announcement && (isExternal ? announcement.href : pathWithBase(anno
       {/* The site is only rebuilt on deploy, so drop the banner client-side once it expires. */}
       <script is:inline>
         (function () {
-          var el = document.currentScript.previousElementSibling;
-          if (el.dataset.expires < new Date().toISOString().slice(0, 10)) el.remove();
+          var el = document.querySelector('.announcement');
+          if (el && el.dataset.expires < new Date().toISOString().slice(0, 10)) el.remove();
         })();
       </script>
     </>
