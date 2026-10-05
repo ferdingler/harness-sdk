@@ -124,7 +124,7 @@ Tool calls use the same `execute_tool <tool name>` span and attributes as non-st
 
 A barge-in is recorded as a `bidi_barge_in` event on the session span.
 
-To count barge-ins, query the session span’s `bidi_barge_in` events. Keeping the event on the session also captures barge-ins between response spans. For detection and playback behavior, see [Barge-in](/docs/user-guide/sdk/bidi/barge-in/index.md).
+To count barge-ins, query the session span’s `bidi_barge_in` events. Keeping the event on the session also captures barge-ins between response spans. For detection and playback behavior, see [Barge-in](/docs/user-guide/sdk/bidi/events/index.md#barge-in-1).
 
 ## Inspecting spans locally
 
@@ -247,42 +247,29 @@ class SessionStats(HookProvider):
 
 Pass it in with `hooks=[SessionStats()]` when constructing the agent. `BidiAfterConnectionRestartEvent.exception` is `None` when the restart succeeded, so the check above counts successful recoveries. A rising barge-in count usually points to responses that run long for a voice interface. A rising restart count points to sessions that frequently reach provider timeout conditions. The full list of lifecycle events is in [Hooks](/docs/user-guide/sdk/bidi/hooks/index.md).
 
-### Tracking token usage per modality
+### Tracking token usage
 
-Traces record aggregate session tokens. The per-modality breakdown is only available on the event stream:
+To track usage during a conversation, sum the counts in `BidiUsageEvent`. Each event reports additional token usage, with optional input and output details for modalities, cache, and reasoning:
 
 ```python
 from strands.bidi.agent import BidiAgent
-from strands.bidi.types import BidiResponseStopEvent, BidiUsageEvent
+from strands.bidi.types import BidiUsageEvent
 
 
 async def track_session(agent: BidiAgent) -> None:
+    total_tokens = 0
     async for event in agent.receive():
         if isinstance(event, BidiUsageEvent):
+            total_tokens += event.total_tokens
             print(
                 f"input={event.input_tokens} output={event.output_tokens} "
-                f"total={event.total_tokens}"
+                f"total={event.total_tokens} session_total={total_tokens}"
             )
-            for modality in event.modality_details:
-                print(
-                    f"  {modality['modality']}: "
-                    f"in={modality['input_tokens']} out={modality['output_tokens']}"
-                )
-        elif isinstance(event, BidiResponseStopEvent):
-            print(f"response {event.response_id} ended")
-            break
+            print(f"input details={event.input_token_details}")
+            print(f"output details={event.output_token_details}")
 ```
 
-Typical output for one turn:
-
-```plaintext
-input=120 output=64 total=184
-  text: in=20 out=0
-  audio: in=100 out=64
-response resp_01 ended
-```
-
-`modality_details` is an empty list when the provider does not report a breakdown, so the loop above is safe on every provider. See [Events](/docs/user-guide/sdk/bidi/events/index.md) for the full event reference.
+The detail properties return empty dictionaries when the provider omits a breakdown. Categories can overlap or be incomplete, so use the main token counts for totals. See [Events](/docs/user-guide/sdk/bidi/events/index.md) for the full event reference.
 
 ## Logging
 
@@ -376,21 +363,21 @@ Each provider emits one span per response. Usage details vary by provider:
 -   [Logs](/docs/user-guide/sdk/observability-evaluation/logs/index.md) - Log levels and handler configuration
 -   [Events](/docs/user-guide/sdk/bidi/events/index.md) - Complete guide to bidirectional streaming events
 -   [Hooks](/docs/user-guide/sdk/bidi/hooks/index.md) - Extend agent functionality with hooks
--   [Barge-in](/docs/user-guide/sdk/bidi/barge-in/index.md) - How barge-in detection works
+-   [Barge-in](/docs/user-guide/sdk/bidi/events/index.md#barge-in-1) - Handle interrupted output and clear buffered audio
 -   [Python API Reference](/docs/api/python/strands.bidi.agent) - Complete API documentation
 
 ## Related pages
 
-- [Barge-in](/docs/user-guide/sdk/bidi/barge-in/index.md) (1 shared tag)
-- [BidiAgent](/docs/user-guide/sdk/bidi/agent/index.md) (1 shared tag)
-- [Build a realtime voice agent](/docs/user-guide/sdk/bidi/index.md) (1 shared tag)
 - [Evaluating remote traces](/docs/user-guide/evals-sdk/how-to/trace_providers/index.md) (1 shared tag)
-- [Events](/docs/user-guide/sdk/bidi/events/index.md) (1 shared tag)
-- [Google Gemini Live](/docs/user-guide/sdk/bidi/models/google/index.md) (1 shared tag)
-- [I/O Streams](/docs/user-guide/sdk/bidi/io/index.md) (1 shared tag)
-- [Interrupts](/docs/user-guide/sdk/bidi/interrupts/index.md) (1 shared tag)
 - [Metrics](/docs/user-guide/sdk/observability-evaluation/metrics/index.md) (1 shared tag)
 - [Observability](/docs/user-guide/sdk/observability-evaluation/observability/index.md) (1 shared tag)
+- [Observe your agent](/docs/user-guide/sdk/observability-evaluation/index.md) (1 shared tag)
+- [Task decorator](/docs/user-guide/evals-sdk/how-to/eval_task/index.md) (1 shared tag)
+- [Traces](/docs/user-guide/sdk/observability-evaluation/traces/index.md) (1 shared tag)
+- [BidiAgent](/docs/user-guide/sdk/bidi/agent/index.md) (1 shared tag)
+- [Bidirectional Streaming](/docs/user-guide/sdk/bidi/index.md) (1 shared tag)
+- [Bidirectional Streaming Models](/docs/user-guide/sdk/bidi/models/index.md) (1 shared tag)
+- [Google Gemini Live](/docs/user-guide/sdk/bidi/models/google/index.md) (1 shared tag)
 
 
 ## Implementation

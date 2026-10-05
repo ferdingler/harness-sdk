@@ -67,6 +67,7 @@
         -   [Server](/docs/api/python/strands.multiagent.a2a.server)
     -   [Base](/docs/api/python/strands.multiagent.base)
     -   [Graph](/docs/api/python/strands.multiagent.graph)
+    -   [Spec](/docs/api/python/strands.multiagent.spec)
     -   [Swarm](/docs/api/python/strands.multiagent.swarm)
 -   **Plugins**
     -   [Decorator](/docs/api/python/strands.plugins.decorator)

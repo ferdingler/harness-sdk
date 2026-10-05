@@ -765,6 +765,7 @@ When implementing session persistence in your applications, consider these best 
 ## Related pages
 
 - [State Management](/docs/user-guide/sdk/agents/state/index.md) (3 shared tags)
+- [Session Management](/docs/user-guide/sdk/bidi/session-management/index.md) (2 shared tags)
 - [Storage](/docs/user-guide/sdk/storage/index.md) (1 shared tag)
 - [OpenAI Responses API](/docs/user-guide/sdk/model-providers/openai-responses/index.md) (1 shared tag)
 - [Conversation Management](/docs/user-guide/sdk/agents/conversation-management/index.md) (1 shared tag)

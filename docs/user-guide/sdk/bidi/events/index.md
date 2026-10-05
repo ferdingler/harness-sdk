@@ -1,686 +1,265 @@
-You process audio, text, and tool activity as it happens by consuming bidirectional streaming events. Standard streaming uses async iterators or callbacks in a one-shot request-response pattern; bidirectional streaming uses `send()` and `receive()` for explicit control over a persistent, two-way conversation.
+Use stream events to react to a conversation as it unfolds. `BidiAgent` emits events that carry new content or signal a change in state. An event can deliver an audio chunk, add text to a transcript, mark the start or end of a response, or report a tool result.
 
-## Event Model
+Your application consumes these events to play audio, display text, and track ongoing work. A single response can produce many events, while user transcripts and background tool results can arrive independently. All of them flow through the same event stream.
 
-Bidirectional streaming uses a different event model than [standard streaming](/docs/user-guide/sdk/streaming/index.md):
+## Consume events
 
-**Standard Streaming:**
+Read events with `agent.receive()` after starting the agent. To forward events to output streams, use [`agent.run()`](/docs/user-guide/sdk/bidi/io/index.md), which manages the agent lifecycle and sends each event to every configured output stream.
 
--   Uses `stream_async()` or callback handlers
--   Request-response pattern (one invocation per call)
--   Events flow in one direction (model → application)
+Use `isinstance()` to access typed properties, or check the `type` string and read dictionary fields. The example below demonstrates both styles by sending a text prompt and printing completed transcripts until the first model response ends:
 
-**Bidirectional Streaming:**
-
--   Uses `send()` and `receive()` methods
--   Persistent connection (multiple turns per connection)
--   Events flow in both directions (application ↔ model)
--   Supports real-time audio and barge-ins
-
+(( tab "Typed events" ))
 ```python
 import asyncio
-from strands.bidi.agent import BidiAgent
-from strands.bidi.models import BedrockNovaSonicModel
 
-async def main():
-    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
-
-    async with BidiAgent(model=model) as agent:
-        # Send input to model
-        await agent.send("What is 2+2?")
-
-        # Receive events from model
-        async for event in agent.receive():
-            print(f"Event: {event['type']}")
-
-asyncio.run(main())
-```
-
-## Input Types
-
-Send text, streaming audio, or images with `agent.send()`. It accepts a string, a `TextBlock`, `AudioDelta`, or `ImageBlock`, or a dictionary containing exactly one `text`, `audio_delta`, or `image` key.
-
-Text blocks contain complete text input, and image blocks contain complete images. Audio deltas add samples to the live input stream without explicitly ending the user’s turn.
-
-### Text
-
-Send text input to the model.
-
-```python
-from strands.types.content import TextBlock
-
-await agent.send(TextBlock("What is the weather?"))
-
-# Strings and dictionaries are also accepted:
-await agent.send("What is the weather?")
-await agent.send({"text": "What is the weather?"})
-```
-
-### Audio
-
-Send each chunk of audio samples with `AudioDelta`. The model configuration determines the sample rate and channel count for real-time PCM audio.
-
-```python
-from pathlib import Path
-
-from strands.bidi.types import AudioDelta
-
-audio_bytes = Path("audio-chunk.pcm").read_bytes()
-
-await agent.send(AudioDelta(format="pcm", source={"bytes": audio_bytes}))
-
-# Or use a dictionary:
-await agent.send({
-    "audio_delta": {
-        "format": "pcm",
-        "source": {"bytes": audio_bytes},
-    }
-})
-```
-
-### Image
-
-Send image bytes using an image content block.
-
-```python
-from strands.types.media import ImageBlock
-
-with open("image.jpg", "rb") as f:
-    image_bytes = f.read()
-
-await agent.send(ImageBlock(format="jpeg", source={"bytes": image_bytes}))
-
-# Or use a dictionary:
-await agent.send({
-    "image": {
-        "format": "jpeg",
-        "source": {"bytes": image_bytes},
-    }
-})
-```
-
-## Output Event Types
-
-Consume output events through `agent.receive()`.
-
-Text, reasoning, and transcript streams share a lifecycle: a start event, zero or more deltas, a stop event, then a block event containing the accumulated content. Match events by `content_id`, since streams can overlap.
-
-### Connection Lifecycle Events
-
-Events that track the connection state throughout the conversation.
-
-#### BidiConnectionStartEvent
-
-Emitted when the streaming connection is established and ready for interaction.
-
-```python
-{
-    "type": "bidi_connection_start",
-    "connection_id": "conn_abc123",
-    "model": "amazon.nova-2-sonic-v1:0"
-}
-```
-
-**Properties:**
-
--   `connection_id`: Unique identifier for this streaming connection
--   `model`: Model identifier (e.g., “amazon.nova-2-sonic-v1:0”, “gemini-3.8-live”)
-
-#### BidiConnectionRestartEvent
-
-Emitted when the agent restarts the model connection, on either restart path. The agent preserves the conversation history and resumes automatically. A scheduled restart fires proactively when the restart timer reaches the provider’s limit; a timeout restart fires reactively after the model reports a timeout.
-
-```python
-{
-    "type": "bidi_connection_restart",
-    "reason": "scheduled",
-    "timeout_error": None,
-    "turn_interrupted": False
-}
-```
-
-**Properties:**
-
--   `reason`: What triggered the restart
-    -   `"scheduled"`: The restart timer fired ahead of the provider’s limit (the normal path)
-    -   `"timeout"`: The connection timed out and the model reported it
--   `timeout_error`: The timeout error on the reactive path; `None` when the reason is `"scheduled"`
--   `turn_interrupted`: `True` when the restart cut an in-progress or owed turn. The provider replays history as context, so that turn is not answered on its own: re-prompt or notify the user when this is set.
-
-**Usage:**
-
-```python
-async for event in agent.receive():
-    if event["type"] == "bidi_connection_restart":
-        print(f"Connection restarting (reason={event['reason']})")
-        if event["turn_interrupted"]:
-            # This turn was not answered; re-prompt or notify the user.
-            pass
-        # Connection resumes automatically with full history.
-```
-
-See [Connection Lifecycle](/docs/user-guide/sdk/bidi/agent/index.md#connection-restart) for more on restart timing.
-
-#### BidiConnectionWarningEvent
-
-Emitted by the proactive restart timer shortly before a scheduled restart. Informational only: use it to surface a “restarting shortly” hint in a UI.
-
-```python
-{
-    "type": "bidi_connection_warning",
-    "time_left_s": 8.0
-}
-```
-
-**Properties:**
-
--   `time_left_s`: Approximate seconds until the scheduled restart
-
-**Usage:**
-
-```python
-async for event in agent.receive():
-    if event["type"] == "bidi_connection_warning":
-        print(f"Restarting in ~{event['time_left_s']:.0f}s")
-```
-
-#### BidiConnectionStopEvent
-
-Emitted when the streaming connection is closed.
-
-```python
-{
-    "type": "bidi_connection_stop",
-    "connection_id": "conn_abc123",
-    "reason": "user_request"
-}
-```
-
-**Properties:**
-
--   `connection_id`: Unique identifier for this streaming connection
--   `reason`: Why the connection closed. Always `"user_request"`, emitted once a cancellation requested through `agent.cancel()` takes effect.
-
-### Response Lifecycle Events
-
-Response start and stop events bracket the assistant’s audio, text, reasoning, transcript, and tool requests. User transcription is independent and may arrive outside these boundaries.
-
-#### BidiResponseStartEvent
-
-Emitted before a response’s assistant audio, text, reasoning, transcript, and tool-use events.
-
-```python
-{
-    "type": "bidi_response_start",
-    "response_id": "resp_xyz789"
-}
-```
-
-**Properties:**
-
--   `response_id`: Unique identifier for this response (matches `BidiResponseStopEvent`)
-
-#### BidiResponseStopEvent
-
-Emitted when response output ends.
-
-```python
-{
-    "type": "bidi_response_stop",
-    "response_id": "resp_xyz789"
-}
-```
-
-**Properties:**
-
--   `response_id`: Unique identifier for this response
-
-### Audio Events
-
-Each assistant audio stream has start, delta, and stop events sharing a `content_id`. A response can contain multiple audio streams. Audio has no block event.
-
-#### BidiAudioStartEvent
-
-Marks the beginning of an audio stream before chunks arrive.
-
-```python
-{
-    "type": "bidi_audio_start",
-    "content_id": "audio_123"
-}
-```
-
-#### BidiAudioDeltaEvent
-
-Emitted for each chunk of audio output. Audio is base64-encoded for JSON compatibility.
-
-```python
-{
-    "type": "bidi_audio_delta",
-    "audio": "base64_encoded_audio_data...",
-    "format": "pcm",
-    "sample_rate": 16000,
-    "channels": 1,
-    "content_id": "audio_123"
-}
-```
-
-**Properties:**
-
--   `audio`: Base64-encoded audio chunk
--   `format`: Audio encoding format (`"pcm"`, `"wav"`, `"opus"`, `"mp3"`)
--   `sample_rate`: Sample rate in Hz (`16000`, `24000`, `48000`)
--   `channels`: Number of audio channels (`1` = mono, `2` = stereo)
--   `content_id`: Identifier shared by this audio stream’s start, delta, and stop events
-
-**Usage:**
-
-```python
-import base64
-
-async for event in agent.receive():
-    if event["type"] == "bidi_audio_delta":
-        # Decode and play audio
-        audio_bytes = base64.b64decode(event["audio"])
-        play_audio(audio_bytes, sample_rate=event["sample_rate"])
-```
-
-#### BidiAudioStopEvent
-
-Emitted when the audio stream ends, including when stopped due to barge-in. Buffered audio may still be playing. This event carries no audio and does not end the response or its transcript.
-
-```python
-{
-    "type": "bidi_audio_stop",
-    "content_id": "audio_123"
-}
-```
-
-### Text and Reasoning Events
-
-Text events carry written assistant responses. Reasoning events carry reasoning text or thought summaries exposed by the model.
-
-All events include `content_id: str`. Delta events also carry `delta: str`, and block events carry the accumulated `text: str`. Start and stop events carry only the ID.
-
-| Event class | `type` |
-| --- | --- |
-| `BidiTextStartEvent` | `bidi_text_start` |
-| `BidiTextDeltaEvent` | `bidi_text_delta` |
-| `BidiTextStopEvent` | `bidi_text_stop` |
-| `BidiTextBlockEvent` | `bidi_text_block` |
-| `BidiReasoningStartEvent` | `bidi_reasoning_start` |
-| `BidiReasoningDeltaEvent` | `bidi_reasoning_delta` |
-| `BidiReasoningStopEvent` | `bidi_reasoning_stop` |
-| `BidiReasoningBlockEvent` | `bidi_reasoning_block` |
-
-### Transcript Events
-
-Transcript events describe user or assistant speech. Each event includes a `role` and `content_id`.
-
-#### BidiTranscriptStartEvent
-
-Identifies a transcript and reserves its message in conversation history. It contains no text and may arrive after speech has begun.
-
-```python
-{
-    "type": "bidi_transcript_start",
-    "role": "user",
-    "content_id": "content_123"
-}
-```
-
-**Properties:**
-
--   `role`: Who is speaking (`"user"` or `"assistant"`)
--   `content_id`: Identifier for this transcript
-
-#### BidiTranscriptDeltaEvent
-
-Emitted for each incremental transcript update.
-
-```python
-{
-    "type": "bidi_transcript_delta",
-    "delta": "Hello",
-    "role": "user",
-    "content_id": "content_123"
-}
-```
-
-**Properties:**
-
--   `delta`: The incremental transcript text
--   `role`: Who is speaking (`"user"` or `"assistant"`)
--   `content_id`: Identifier for this transcript
-
-#### BidiTranscriptStopEvent
-
-Marks the end of a user or assistant transcript stream. It carries no transcript text.
-
-```python
-{
-    "type": "bidi_transcript_stop",
-    "role": "user",
-    "content_id": "content_123"
-}
-```
-
-**Properties:**
-
--   `role`: Who spoke (`"user"` or `"assistant"`)
--   `content_id`: Identifier for this transcript
-
-#### BidiTranscriptBlockEvent
-
-Carries the accumulated transcript after its stop event.
-
-```python
-{
-    "type": "bidi_transcript_block",
-    "transcript": "Hello world",
-    "role": "user",
-    "content_id": "content_123"
-}
-```
-
-**Properties:**
-
--   `transcript`: The final transcript text
--   `role`: Who spoke (`"user"` or `"assistant"`)
--   `content_id`: Identifier for this transcript
-
-### Reading Completed Content
-
-Use deltas for live updates and block events for completed text, reasoning, and transcripts. This function reads completed content from a started agent:
-
-```python
 from strands.bidi.agent import BidiAgent
 from strands.bidi.types import (
-    BidiReasoningBlockEvent,
-    BidiTextBlockEvent,
+    BidiResponseStopEvent,
     BidiTranscriptBlockEvent,
 )
 
-async def print_completed_content(agent: BidiAgent) -> None:
-    async for event in agent.receive():
-        if isinstance(event, (BidiTextBlockEvent, BidiReasoningBlockEvent)):
-            print(event.text)
-        elif isinstance(event, BidiTranscriptBlockEvent):
-            print(f"{event.role}: {event.transcript}")
-```
 
-### Conversation History Metadata
+async def main() -> None:
+    async with BidiAgent() as agent:
+        await agent.send("Say hello in one sentence.")
 
-Streamed messages in `agent.messages` include `BidiContentMetadata` under `message["metadata"]["custom"]["bidi"]`:
+        async for event in agent.receive():
+            if isinstance(event, BidiTranscriptBlockEvent):
+                print(f"{event.role}: {event.transcript}")
+            elif isinstance(event, BidiResponseStopEvent):
+                break
 
-| Field | Values |
-| --- | --- |
-| `kind` | `"text"`, `"reasoning"`, `"transcript"` |
-| `status` | `"pending"`, `"complete"`, `"incomplete"` |
-
-A start event reserves an empty message with status `"pending"`. A stop event fills the message with accumulated content and marks it `"complete"`. Text and transcripts use `text` content blocks; reasoning uses `reasoningContent` blocks.
-
-If a connection ends before the stop event, the message is marked `"incomplete"`. Text and reasoning messages retain their accumulated content. Unfinished transcripts contain `[Transcript unavailable.]`.
-
-### Barge-in Events
-
-Events for handling barge-in, when the user starts speaking during a model response.
-
-#### BidiBargeInEvent
-
-Signals a barge-in that stops response generation or playback, typically when the user starts speaking. The bidirectional session continues.
-
-```python
-{
-    "type": "bidi_barge_in"
-}
-```
-
-**Usage:**
-
-```python
-async for event in agent.receive():
-    if event["type"] == "bidi_barge_in":
-        print("Barge-in detected")
-        # Audio output automatically cleared
-        # Model ready for new input
-```
-
-Barge-in and tool interrupts
-
-`BidiBargeInEvent` applies to the current response or its playback. New input typically starts another response. Agent’s [human-in-the-loop interrupts](/docs/user-guide/sdk/interrupts/index.md) pause an invocation to await input before resuming tool execution. BidiAgent does not yet support tool interrupts.
-
-### Tool Events
-
-#### BidiToolUseBlocksEvent
-
-Emitted when the model provides a complete group of tool calls. `tool_uses` contains the calls in provider order. A provider that emits individual calls uses a one-element list.
-
-```python
-{
-    "type": "bidi_tool_use_blocks",
-    "tool_uses": [
-        {
-            "toolUseId": "tool_123",
-            "name": "get_weather",
-            "input": {"city": "Seattle"}
-        },
-        {
-            "toolUseId": "tool_456",
-            "name": "get_weather",
-            "input": {"city": "Portland"}
-        }
-    ]
-}
-```
-
-Each call contains `toolUseId`, `name`, and `input`. The agent executes the calls concurrently and sends their results together. A response can contain multiple tool-use groups.
-
-Tools execute in the background. `ToolResultEvent` carries each result as it becomes available. Once the group finishes, `ToolResultMessageEvent` carries the history message containing all its results. Results retain their original tool-use IDs. Dispatch acknowledgements emit `MessageAddedEvent` hooks when appended to history.
-
-### Usage Events
-
-Events for tracking token consumption across different modalities.
-
-#### BidiUsageEvent
-
-Emitted periodically to report token usage with modality breakdown.
-
-```python
-{
-    "type": "bidi_usage",
-    "inputTokens": 150,
-    "outputTokens": 75,
-    "totalTokens": 225,
-    "modality_details": [
-        {"modality": "text", "input_tokens": 100, "output_tokens": 50},
-        {"modality": "audio", "input_tokens": 50, "output_tokens": 25}
-    ]
-}
-```
-
-**Properties:**
-
--   `inputTokens`: Total tokens used for all input modalities
--   `outputTokens`: Total tokens used for all output modalities
--   `totalTokens`: Sum of input and output tokens
--   `modality_details`: Optional list of token usage per modality
--   `cacheReadInputTokens`: Optional tokens read from cache
--   `cacheWriteInputTokens`: Optional tokens written to cache
-
-## Event Flow Examples
-
-### Basic Audio Conversation
-
-```python
-import asyncio
-from strands.bidi.agent import BidiAgent
-from strands.bidi.io import AudioIO
-from strands.bidi.models import BedrockNovaSonicModel
-
-async def main():
-    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
-    agent = BidiAgent(model=model)
-    audio_io = AudioIO()
-
-    await agent.start()
-
-    # Process events from audio conversation
-    async for event in agent.receive():
-        if event["type"] == "bidi_connection_start":
-            print(f"Connected to {event['model']}")
-
-        elif event["type"] == "bidi_response_start":
-            print(f"Response starting: {event['response_id']}")
-
-        elif event["type"] == "bidi_audio_delta":
-            print(f"Audio chunk: {len(event['audio'])} bytes")
-
-        elif event["type"] == "bidi_transcript_block":
-            print(f"{event['role']}: {event['transcript']}")
-
-        elif event["type"] == "bidi_response_stop":
-            print(f"Response complete: {event['response_id']}")
-
-    await agent.stop()
 
 asyncio.run(main())
 ```
+(( /tab "Typed events" ))
 
-### Tracking Transcript State
-
+(( tab "Dictionary access" ))
 ```python
 import asyncio
+
 from strands.bidi.agent import BidiAgent
-from strands.bidi.models import BedrockNovaSonicModel
 
-async def main():
-    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 
-    async with BidiAgent(model=model) as agent:
-        await agent.send("Tell me about Python")
+async def main() -> None:
+    async with BidiAgent() as agent:
+        await agent.send("Say hello in one sentence.")
 
         async for event in agent.receive():
-            if event["type"] == "bidi_transcript_block":
-                print(f"{event['role']}: {event['transcript']}")
-
-asyncio.run(main())
-```
-
-### Tool Execution During Conversation
-
-```python
-import asyncio
-from strands.bidi.agent import BidiAgent
-from strands.bidi.models import BedrockNovaSonicModel
-from strands.vended_tools import notebook
-
-async def main():
-    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
-    agent = BidiAgent(model=model, tools=[notebook])
-
-    async with agent as agent:
-        await agent.send('Create a notebook named "ideas" and add three project ideas.')
-
-        async for event in agent.receive():
-            event_type = event["type"]
-
+            event_type = event.get("type")
             if event_type == "bidi_transcript_block":
                 print(f"{event['role']}: {event['transcript']}")
+            elif event_type == "bidi_response_stop":
+                break
 
-            elif event_type == "bidi_tool_use_blocks":
-                for tool_use in event["tool_uses"]:
-                    print(f"Using tool: {tool_use['name']}")
-                    print(f"   Input: {tool_use['input']}")
 
 asyncio.run(main())
 ```
+(( /tab "Dictionary access" ))
 
-### Handling Barge-in
+## Event families
 
-```python
-import asyncio
-from strands.bidi.agent import BidiAgent
-from strands.bidi.models import BedrockNovaSonicModel
+Model adapters emit connection starts, response boundaries, content streams, barge-in signals, tool requests, and usage reports. The agent adds completed blocks, tool results, restart notifications, and connection stops.
 
-async def main():
-    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
+Provider support and configuration determine which events appear. See the [event API reference](/docs/api/python/strands.bidi.types) for complete class definitions and fields.
 
-    async with BidiAgent(model=model) as agent:
-        await agent.send("Tell me a long story about space exploration")
+### Connections
 
-        barge_in_count = 0
+Use connection events to track when the model is ready, a restart is approaching, or the agent is shutting down.
 
-        async for event in agent.receive():
-            if event["type"] == "bidi_transcript_block":
-                print(f"{event['role']}: {event['transcript']}")
+| Event | Meaning |
+| --- | --- |
+| [`BidiConnectionStartEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiConnectionStartEvent) | The model connection is ready. Includes its `connection_id` and `model`. |
+| [`BidiConnectionWarningEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiConnectionWarningEvent) | A scheduled restart is approaching. `time_left_s` estimates the time remaining. |
+| [`BidiConnectionRestartEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiConnectionRestartEvent) | The agent is replacing the connection. `reason` identifies a scheduled restart or timeout. |
+| [`BidiConnectionStopEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiConnectionStopEvent) | The agent is shutting down. Includes `connection_id`. |
 
-            elif event["type"] == "bidi_barge_in":
-                barge_in_count += 1
-                print(f"\nBarge-in (#{barge_in_count})")
+### Responses
 
-asyncio.run(main())
-```
+Use response events to track a model response to user input, conceptually similar to a single `Agent` invocation. Match the start and stop events by `response_id`.
 
-### Connection Restart Handling
+| Event | Meaning |
+| --- | --- |
+| [`BidiResponseStartEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiResponseStartEvent) | A model response begins. |
+| [`BidiResponseStopEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiResponseStopEvent) | The response’s output ends. Buffered audio may still be playing. |
 
-```python
-import asyncio
-from strands.bidi.agent import BidiAgent
-from strands.bidi.models import BedrockNovaSonicModel
+Background [tool execution](#tool-execution) can continue after response stop, and tool results can trigger a follow-up model response.
 
-async def main():
-    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")  # 8-minute timeout
+### Audio
 
-    async with BidiAgent(model=model) as agent:
-        # Continuous conversation that handles restarts
-        async for event in agent.receive():
-            if event["type"] == "bidi_connection_warning":
-                print(f"Restarting in ~{event['time_left_s']:.0f}s")
+Use audio events to play the assistant’s speech. Events for one audio stream share a `content_id`.
 
-            elif event["type"] == "bidi_connection_restart":
-                print(f"Connection restarting (reason={event['reason']})")
-                if event["turn_interrupted"]:
-                    print("   Last turn was not answered; re-prompt if needed")
-                # History is preserved and the connection resumes automatically.
+| Event | Meaning |
+| --- | --- |
+| [`BidiAudioStartEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiAudioStartEvent) | An audio stream begins. |
+| [`BidiAudioDeltaEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiAudioDeltaEvent) | The next audio chunk is in `audio`, encoded as base64. |
+| [`BidiAudioStopEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiAudioStopEvent) | The audio stream ends. |
 
-            elif event["type"] == "bidi_connection_start":
-                print(f"Connected to {event['model']}")
+Each delta also includes the audio `format`, `sample_rate`, and `channels`. Buffered audio may still be playing when `BidiAudioStopEvent` arrives. See [`AudioIO`](/docs/user-guide/sdk/bidi/io/index.md#audio-io) for playback handling.
 
-            elif event["type"] == "bidi_transcript_block":
-                print(f"{event['role']}: {event['transcript']}")
+### Transcripts
 
-asyncio.run(main())
-```
+Use transcript events to display user or assistant speech as text. Each event includes the speaker’s `role` (`"user"` or `"assistant"`) and the stream’s `content_id`.
 
-## Hook Events
+| Event | Meaning |
+| --- | --- |
+| [`BidiTranscriptStartEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiTranscriptStartEvent) | A transcript stream begins. |
+| [`BidiTranscriptDeltaEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiTranscriptDeltaEvent) | The next transcript fragment is in `delta`. |
+| [`BidiTranscriptStopEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiTranscriptStopEvent) | The transcript stream ends. |
+| [`BidiTranscriptBlockEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiTranscriptBlockEvent) | The complete transcript is in `transcript`. |
 
-Hook events are a separate concept from streaming events. While streaming events flow through `agent.receive()` during conversations, hook events are callbacks that trigger at specific lifecycle points (like initialization, message added, or barge-in). Hook events allow you to inject custom logic for cross-cutting concerns like logging, analytics, and session persistence without processing the event stream directly.
+### Text
 
-For details on hook events and usage patterns, see the [Hooks](/docs/user-guide/sdk/bidi/hooks/index.md) documentation.
+Use text events for written assistant output. Events for one text stream share a `content_id`.
+
+| Event | Meaning |
+| --- | --- |
+| [`BidiTextStartEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiTextStartEvent) | A text stream begins. |
+| [`BidiTextDeltaEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiTextDeltaEvent) | The next text fragment is in `delta`. |
+| [`BidiTextStopEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiTextStopEvent) | The text stream ends. |
+| [`BidiTextBlockEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiTextBlockEvent) | The complete text is in `text`. |
+
+### Reasoning
+
+Use reasoning events for reasoning text or thought summaries exposed by the model. Events for one reasoning stream share a `content_id`.
+
+| Event | Meaning |
+| --- | --- |
+| [`BidiReasoningStartEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiReasoningStartEvent) | A reasoning stream begins. |
+| [`BidiReasoningDeltaEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiReasoningDeltaEvent) | The next reasoning fragment is in `delta`. |
+| [`BidiReasoningStopEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiReasoningStopEvent) | The reasoning stream ends. |
+| [`BidiReasoningBlockEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiReasoningBlockEvent) | The complete reasoning is in `text`. |
+
+### Tools
+
+Use tool events to track requests, intermediate output, and completed results.
+
+| Event | Meaning |
+| --- | --- |
+| [`BidiToolUseBlocksEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiToolUseBlocksEvent) | The model requests a group of tool calls in `tool_uses`. Each call includes `toolUseId`, `name`, and `input`. |
+| `ToolStreamEvent` | A running tool yields intermediate output. `tool_stream_event` contains `tool_use` and `data`. |
+| `ToolResultEvent` | A tool finishes. `tool_result` contains its `toolUseId`, `status`, and result `content`. |
+| `ToolResultMessageEvent` | The agent records all results from a tool group in a history `message`. |
+
+### Barge-in
+
+[`BidiBargeInEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiBargeInEvent) signals an interruption to model output, whether audio, text, or other content. It carries no fields beyond `type`. See [Barge-in](#barge-in-1) for responding to interrupted output.
+
+### Usage
+
+Use [`BidiUsageEvent`](/docs/api/python/strands.bidi.types#strands.bidi.types.BidiUsageEvent) to track token usage during a conversation. Each event reports additional `input_tokens`, `output_tokens`, and `total_tokens`; sum these counts to track conversation totals.
+
+Optional `input_token_details` and `output_token_details` provide breakdowns by modality, cache, or reasoning, depending on the provider. See [Tracking token usage](/docs/user-guide/sdk/bidi/observability/index.md#tracking-token-usage) for an example.
+
+## Event ordering
+
+Follow these ordering rules when consuming events or implementing a custom model. The diagram illustrates an audio response with an assistant transcript and a separate user transcript.
+
+Audio and transcript event orderingTwo columns show a user transcript and an assistant response containing audio and transcript events. Each content stream follows its own start, delta, and stop sequence. Transcript blocks follow transcript stop. All assistant content finishes before response stop, with token usage shown immediately before it. Nova Sonic can report usage outside response boundaries. User transcripts can interleave independently; aligned rows do not imply timing. Breaks in the lifelines indicate that the conversation can continue before a connection-stop event signals the end of the conversation.User transcriptAssistant responseBidiConnectionStartEventBidiConnectionStopEventBidiTranscriptStartEventBidiTranscriptDeltaEventBidiTranscriptStopEventBidiTranscriptBlockEventBidiResponseStartEventBidiAudioStartEventBidiTranscriptStartEventBidiAudioDeltaEventBidiTranscriptDeltaEventBidiAudioStopEventBidiTranscriptStopEventBidiTranscriptBlockEventBidiUsageEventBidiResponseStopEventConversation continues
+
+Nova Sonic usage timing
+
+[Amazon Bedrock Nova Sonic](/docs/user-guide/sdk/bidi/models/bedrock/index.md) currently reports usage independently of response boundaries. Its usage events can arrive before, during, or after a response.
+
+User transcripts have their own lifecycle and can start or finish before, during, or after an assistant response. Aligned rows do not imply timing, and a transcript start does not mark the exact moment speech began. Process assistant audio and tool requests without waiting for a completed user transcript.
+
+1.  **Connection starts.** `BidiConnectionStartEvent` precedes output from that model connection. Track the connection by `connection_id`. A connection can contain multiple responses.
+2.  **Response starts.** `BidiResponseStartEvent` precedes the response’s assistant content and tool requests. Match response start and stop by `response_id`.
+3.  **Content streams.** Each stream emits a start, zero or more deltas, and a stop. Text, reasoning, and other streams can interleave with the audio and transcripts shown, and streams can finish in a different order from their starts. Track each stream by its `content_id`, unique within the connection. A response can contain multiple streams and tool groups.
+4.  **Completed blocks follow.** The agent emits each completed block after its content stop, such as `BidiTextBlockEvent` after `BidiTextStopEvent`. Custom models supply start, delta, and stop events; the agent assembles the block. Audio has no completed block event.
+5.  **Usage is reported.** `BidiUsageEvent` provides token counts before response stop.
+6.  **Response stops.** `BidiResponseStopEvent` follows all assistant content stops and completed blocks in that response. User transcripts and background tool results are independent of this boundary.
+7.  **Connection stops.** `BidiConnectionStopEvent` signals the end of the conversation; the event iterator then ends.
+
+Use deltas for live updates. A completed block contains the full text for its stream, so replace the displayed partial text when it arrives. See [Messages](#messages) for how this content becomes conversation history.
+
+The model’s events stay in order, but background tool results and restart notifications can appear between them, even between a content stop and its block. Correlate events by their identifiers rather than adjacency.
+
+A stop, connection failure, or forced restart can leave content or a response unfinished. Clean up application state without requiring a final content stop, block, or response stop event.
+
+### Tool execution
+
+Track tool calls by `toolUseId`; results can arrive out of order or during another response. In this example, the tool group finishes after the response that requested it:
+
+Tool execution can continue after response stopAn assistant response requests a group of tools, which run concurrently. Tools can emit intermediate output. In this example the response stops before the tools finish. Each tool emits a result, then the agent records all results in a tool result message.Assistant responseTool executionBidiResponseStartEventBidiToolUseBlocksEventToolStreamEventZero or more per toolBidiResponseStopEventToolResultEventOne per toolToolResultMessageEventAll results recordedStart requested tools
+
+1.  **Request the group.** `BidiToolUseBlocksEvent` contains complete calls in provider order. The agent starts them concurrently.
+2.  **Receive tool output.** Tools can emit intermediate output through `ToolStreamEvent`. Each `ToolResultEvent` arrives as a tool finishes.
+3.  **Record the results.** After all calls finish, `ToolResultMessageEvent` exposes their results in request order. It confirms the history update, not delivery to the model.
+
+Tool errors reported through `ToolResultEvent` use `status: "error"`. Failures that escape the tool runner raise from `receive()`.
+
+### Barge-in
+
+Use `BidiBargeInEvent` to stop presenting the current model output while the conversation and any background tools continue. The example below shows interrupted audio, but the same signal applies to text and other output:
+
+Barge-in during a responseBarge-in signals interrupted model output, including audio, text, or other content. This audio example shows response start, audio start, and audio delta events, followed by BidiBargeInEvent, audio stop, and response stop. For audio output, clear buffered audio when barge-in arrives. Barge-in must occur between response start and response stop.Assistant responseBidiResponseStartEventBidiAudioStartEventBidiAudioDeltaEventBidiBargeInEventBidiAudioStopEventBidiResponseStopEvent
+
+Clear buffered audio as soon as the event arrives so playback stops promptly. [`AudioIO.output()`](/docs/user-guide/sdk/bidi/io/index.md#audio-io) does this automatically; a custom output stream must clear its own playback queue.
+
+### Connection restarts
+
+Use restart events to track connection replacement and identify interrupted turns. With automatic restart enabled, the agent can replace its model connection on a schedule or after a timeout. It emits `BidiConnectionRestartEvent` before replacement and `BidiConnectionStartEvent` when the new connection is ready:
+
+Scheduled and timeout connection restartsTwo alternative paths lead to a replacement connection. A scheduled restart is preceded by a warning. A timeout restart needs no warning. Either path emits a restart event before replacing the connection. A successful replacement emits a connection start with a new connection ID.Scheduled restartTimeoutBidiConnectionWarningEventBidiConnectionRestartEventreason: "scheduled"BidiConnectionRestartEventreason: "timeout"BidiConnectionStartEventNew connection\_idReplace connection
+
+-   **Scheduled restart.** A warning estimates the time remaining in `time_left_s`; conversation events can occur before the restart. The restart event has `reason: "scheduled"` and `timeout_error: None`.
+-   **Timeout.** No warning is required. The restart event has `reason: "timeout"`, and `timeout_error` contains the model’s `ConnectionTimeoutError`.
+
+When `turn_interrupted` is `True`, the restart cut off an active response or an unanswered turn. Replayed history supplies context but does not request an answer to that turn, so notify the user or send another prompt once the new connection is ready.
+
+If your application tracks unfinished content streams, stop treating them as active when the new connection starts. You can keep partial content for display, but treat new streams separately. Background tools can continue across the restart.
+
+## Messages
+
+`BidiAgent` builds conversation state in `agent.messages` as it processes streamed events. For each text, reasoning, or transcript stream, it groups events by `content_id` and assembles a separate message:
+
+1.  **Start.** The agent appends a placeholder message with an empty `content` list and a status of `"pending"`.
+2.  **Delta.** It accumulates text in an internal buffer while the pending message stays empty.
+3.  **Stop.** It fills the placeholder with the accumulated content, marks it `"complete"`, and emits the corresponding completed block event.
+
+Reserving each message at stream start keeps history in that order, even when streams finish in a different order. A single response can contribute several messages.
+
+For these streamed messages, `message["metadata"]["custom"]["bidi"]` records the content `kind` (`"text"`, `"reasoning"`, or `"transcript"`) and completion `status`.
+
+If a connection ends before a stream stops, the agent marks its message `"incomplete"`. Text and reasoning retain their partial content; unfinished transcripts contain `[Transcript unavailable.]`. The agent does not emit completed blocks for unfinished streams.
+
+The messages list stores assembled content alongside user input and tool exchanges:
+
+| Content | Representation in history |
+| --- | --- |
+| User input sent as text or images | A user message containing those blocks. |
+| User or assistant transcript | A user or assistant message containing a `text` block. |
+| Assistant text | An assistant message containing a `text` block. |
+| Reasoning | An assistant message containing a `reasoningContent` block. |
+| Tool activity | Assistant messages containing `toolUse` blocks, paired with user messages containing `toolResult` blocks. |
+
+Audio chunks are not stored in history. Speech appears as transcript text when the model provides it.
+
+Tool requests add an exchange containing the calls and dispatch acknowledgements. After all calls in the group finish, the agent appends a second exchange with the same calls and their results, then emits `ToolResultMessageEvent`.
 
 ## Related pages
 
-- [Barge-in](/docs/user-guide/sdk/bidi/barge-in/index.md) (1 shared tag)
 - [BidiAgent](/docs/user-guide/sdk/bidi/agent/index.md) (1 shared tag)
-- [Build a realtime voice agent](/docs/user-guide/sdk/bidi/index.md) (1 shared tag)
+- [Bidirectional Streaming](/docs/user-guide/sdk/bidi/index.md) (1 shared tag)
+- [Bidirectional Streaming Models](/docs/user-guide/sdk/bidi/models/index.md) (1 shared tag)
 - [Google Gemini Live](/docs/user-guide/sdk/bidi/models/google/index.md) (1 shared tag)
 - [I/O Streams](/docs/user-guide/sdk/bidi/io/index.md) (1 shared tag)
+- [Input Content](/docs/user-guide/sdk/bidi/content/index.md) (1 shared tag)
 - [Interrupts](/docs/user-guide/sdk/bidi/interrupts/index.md) (1 shared tag)
 - [OpenAI Realtime](/docs/user-guide/sdk/bidi/models/openai/index.md) (1 shared tag)
-- [Session Management](/docs/user-guide/sdk/bidi/session-management/index.md) (1 shared tag)
+- [Tools](/docs/user-guide/sdk/bidi/tools/index.md) (1 shared tag)
 - [Bidirectional Streaming Observability](/docs/user-guide/sdk/bidi/observability/index.md) (1 shared tag)
-- [Bidirectional Streaming Hooks](/docs/user-guide/sdk/bidi/hooks/index.md) (1 shared tag)
 
 
 ## Implementation
 
 ### Python
 
-- [harness-sdk/strands-py/src/strands/bidi/types/agent.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/types/agent.py)
-- [harness-sdk/strands-py/src/strands/bidi/types/content.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/types/content.py)
-- [harness-sdk/strands-py/src/strands/bidi/types/media.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/types/media.py)
-- [harness-sdk/strands-py/src/strands/types/content.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/content.py)
 - [harness-sdk/strands-py/src/strands/bidi/types/events.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/types/events.py)
-- [harness-sdk/strands-py/src/strands/bidi/types/io.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/types/io.py)
-- [harness-sdk/strands-py/src/strands/types/media.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/media.py)
+- [harness-sdk/strands-py/src/strands/bidi/models/model.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/model.py)
+- [harness-sdk/strands-py/src/strands/bidi/agent/agent.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/agent/agent.py)
+- [harness-sdk/strands-py/src/strands/bidi/agent/loop.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/agent/loop.py)
+- [harness-sdk/strands-py/src/strands/bidi/agent/_blocks.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/agent/_blocks.py)
+- [harness-sdk/strands-py/src/strands/bidi/io/audio.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/io/audio.py)
+- [harness-sdk/strands-py/src/strands/types/_events.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/_events.py)

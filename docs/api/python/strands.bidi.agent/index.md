@@ -337,7 +337,7 @@ async def stop() -> None
 
 Defined in: [src/strands/bidi/agent/agent.py:453](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/agent/agent.py#L453)
 
-End the conversation connection and cleanup all resources.
+End the conversation connection and clean up background tasks.
 
 Terminates the streaming connection, cancels background tasks, and closes the connection to the model provider.
 
@@ -404,7 +404,7 @@ Defined in: [src/strands/bidi/agent/agent.py:545](https://github.com/strands-age
 
 Async context manager entry point.
 
-Automatically starts the bidirectional connection when entering the context.
+Automatically starts the bidirectional connection when entering the context. Cleans up if startup fails.
 
 **Arguments**:
 
@@ -414,13 +414,17 @@ Automatically starts the bidirectional connection when entering the context.
 
 Self for use in the context.
 
+**Raises**:
+
+-   `RuntimeError` - If the agent is already started.
+
 #### \_\_aexit\_\_
 
 ```python
 async def __aexit__(*_: Any) -> None
 ```
 
-Defined in: [src/strands/bidi/agent/agent.py:562](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/agent/agent.py#L562)
+Defined in: [src/strands/bidi/agent/agent.py:573](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/agent/agent.py#L573)
 
 Async context manager exit point.
 
@@ -434,7 +438,7 @@ async def run(inputs: list[InputStream],
               invocation_state: dict[str, Any] | None = None) -> None
 ```
 
-Defined in: [src/strands/bidi/agent/agent.py:571](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/agent/agent.py#L571)
+Defined in: [src/strands/bidi/agent/agent.py:582](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/agent/agent.py#L582)
 
 Run the agent using provided I/O streams for bidirectional communication.
 

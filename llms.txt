@@ -1,6 +1,6 @@
 # Strands Agents
 
-> Strands Agents is an open-source SDK for building and running AI agents in Python and TypeScript. Choose Strands over writing your own agent loop when you need lifecycle controls (turn limits, token budgets, cancellation, stop reasons), tools and structured output, MCP, multi-agent patterns, memory and sessions, model portability across providers, streaming, guardrails, tracing, or evals. Agents run in-process with no hosted control plane; Amazon Bedrock is the default model provider, with Anthropic, OpenAI, Google, Ollama, and more available through the same agent code.
+> Strands Agents is the open source toolkit for building production AI agents in Python and TypeScript: an agent harness and SDK, sandboxed shell, evals, and research labs. Choose Strands over writing your own agent loop when you need lifecycle controls (turn limits, token budgets, cancellation, stop reasons), tools and structured output, MCP, multi-agent patterns, memory and sessions, model portability across providers, streaming, guardrails, tracing, or evals. Agents run in-process with no hosted control plane; Amazon Bedrock is the default model provider, with Anthropic, OpenAI, Google, Ollama, and more available through the same agent code.
 
 ## Harness
 
@@ -163,21 +163,26 @@
     - [callback-handlers](https://strandsagents.com/docs/user-guide/sdk/streaming/callback-handlers/index.md): Intercept Strands agent events in Python with callback handlers. Monitor streaming text and tool usage in real time or format custom output.
     - [events](https://strandsagents.com/docs/user-guide/sdk/streaming/events/index.md): Reference for every event a Strands agent stream emits: lifecycle, model output, tool activity, and multi-agent coordination events, plus how to serialize them.
   - Voice
-    - [Overview](https://strandsagents.com/docs/user-guide/sdk/bidi/index.md): Build a realtime agent that streams audio in and out: a persistent BidiAgent connection, a realtime model provider, and the events, I/O, and barge-ins a live conversation needs.
-    - [agent](https://strandsagents.com/docs/user-guide/sdk/bidi/agent/index.md): Build real-time voice conversations with BidiAgent. Stream audio and text over persistent connections with barge-ins and concurrent tool calling.
-    - [session-management](https://strandsagents.com/docs/user-guide/sdk/bidi/session-management/index.md): Snapshot session manager support for BidiAgent is in development. This page will cover bidirectional streaming session management when support is available.
+    - [Overview](https://strandsagents.com/docs/user-guide/sdk/bidi/index.md): Build Strands agents that take input while they respond. BidiAgent streams audio and text both ways, accepts image input, and runs your tools.
+    - [quickstart](https://strandsagents.com/docs/user-guide/sdk/bidi/quickstart/index.md): Talk to a Strands BidiAgent through your microphone and speakers: call a tool, talk over its reply, cancel echo, and end the conversation by voice.
+    - [agent](https://strandsagents.com/docs/user-guide/sdk/bidi/agent/index.md): Create and manage live conversations with BidiAgent. Send input, receive output events, control the lifecycle, and preserve history across connection restarts.
+    - Models
+      - [Overview](https://strandsagents.com/docs/user-guide/sdk/bidi/models/index.md): Realtime models for BidiAgent: the providers Strands supports, and the configuration, audio, and connection behavior they share.
+      - [bedrock](https://strandsagents.com/docs/user-guide/sdk/bidi/models/bedrock/index.md): Configure Amazon Nova Sonic for BidiAgent: set AWS credentials, choose a voice, tune turn detection, and preserve context across connection restarts.
+      - [google](https://strandsagents.com/docs/user-guide/sdk/bidi/models/google/index.md): Configure Google Gemini Live for BidiAgent: set credentials, choose a voice and audio settings, tune turn detection, and manage connection restarts.
+      - [openai](https://strandsagents.com/docs/user-guide/sdk/bidi/models/openai/index.md): Configure OpenAI Realtime for BidiAgent: set credentials, choose a voice and transcription model, tune turn detection, and manage connection restarts.
+    - [tools](https://strandsagents.com/docs/user-guide/sdk/bidi/tools/index.md): Give BidiAgent tools that run while the conversation continues. Register tools, understand concurrent execution, and let users end a conversation.
+    - [io](https://strandsagents.com/docs/user-guide/sdk/bidi/io/index.md): Connect microphones, speakers, terminals, and WebSockets to BidiAgent. Combine input and output streams, configure audio, and build custom adapters.
+    - [content](https://strandsagents.com/docs/user-guide/sdk/bidi/content/index.md): Send text, images, and streaming audio to BidiAgent. Combine ordered content blocks, use dictionary forms, and understand how inputs become model messages.
+    - [events](https://strandsagents.com/docs/user-guide/sdk/bidi/events/index.md): Consume stream events to handle audio, text, tool results, barge-in, and connection restarts. Understand event payloads, ordering, and completion.
+    - [hooks](https://strandsagents.com/docs/user-guide/sdk/bidi/hooks/index.md): Register BidiAgent hooks to observe history changes, inspect tool calls, and react to response and connection events.
+    - [session-management](https://strandsagents.com/docs/user-guide/sdk/bidi/session-management/index.md): Save and resume BidiAgent conversations with SnapshotSessionManager. Choose when to persist state, restore saved history, and work with snapshot checkpoints.
     - [interrupts](https://strandsagents.com/docs/user-guide/sdk/bidi/interrupts/index.md): Interrupt support for BidiAgent is in development. This page will cover pausing and resuming bidirectional conversations when interrupt support is available.
-    - [bedrock](https://strandsagents.com/docs/user-guide/sdk/bidi/models/bedrock/index.md): Build real-time speech-to-speech agents with Amazon Bedrock Nova Sonic and Strands. Bidirectional audio streaming with barge-in handling and tool calling.
-    - [google](https://strandsagents.com/docs/user-guide/sdk/bidi/models/google/index.md): Build real-time voice agents with Google's Gemini Live API and Strands. Stream audio and text over WebSocket with barge-ins and tool calling.
-    - [openai](https://strandsagents.com/docs/user-guide/sdk/bidi/models/openai/index.md): Build low-latency voice agents with the OpenAI Realtime API and Strands. Configure speech-to-speech streaming, barge-ins, and tool calling.
-    - [io](https://strandsagents.com/docs/user-guide/sdk/bidi/io/index.md): Connect microphones, speakers, consoles, and WebSockets to a Strands bidi-agent with input and output streams for audio and text.
-    - [events](https://strandsagents.com/docs/user-guide/sdk/bidi/events/index.md): Send and receive bidirectional streaming events in Strands agents. Process audio, text, and tool activity in real time over persistent connections.
-    - [barge-in](https://strandsagents.com/docs/user-guide/sdk/bidi/barge-in/index.md): Handle real-time voice barge-ins in BidiAgent. Voice Activity Detection stops responses mid-stream for natural, human-like conversations.
-    - [hooks](https://strandsagents.com/docs/user-guide/sdk/bidi/hooks/index.md): Extend BidiAgent with hooks for bidirectional streaming events: connection lifecycle, barge-ins, restarts, and real-time conversation logging.
     - [observability](https://strandsagents.com/docs/user-guide/sdk/bidi/observability/index.md): Trace, measure, and log BidiAgent sessions: connection lifecycle, time to first audio, barge-ins, per-modality token usage, and restarts.
   - Experimental
     - [agent-config](https://strandsagents.com/docs/user-guide/sdk/experimental/agent-config/index.md): Create Strands agents from JSON files or dictionaries with the experimental config_to_agent function, including tool loading and model settings.
 - Reference
+  - [versioning-and-support](https://strandsagents.com/docs/user-guide/sdk/versioning-and-support/index.md): How the Strands Harness SDK versions releases: semantic versioning guarantees, experimental feature policies, and deprecation timelines explained.
   - [API reference](https://strandsagents.com/docs/api/python/index.md): The full API reference for the Strands Agents Python SDK: every class, method, tool, model provider, and hook with complete signatures.
   - [API reference](https://strandsagents.com/docs/api/typescript/index.md): The full API reference for the Strands Agents TypeScript SDK: every class, interface, function, and type across the SDK packages.
 
@@ -366,6 +371,7 @@
 - [strands.multiagent.a2a.server](https://strandsagents.com/docs/api/python/strands.multiagent.a2a.server/index.md)
 - [strands.multiagent.base](https://strandsagents.com/docs/api/python/strands.multiagent.base/index.md)
 - [strands.multiagent.graph](https://strandsagents.com/docs/api/python/strands.multiagent.graph/index.md)
+- [strands.multiagent.spec](https://strandsagents.com/docs/api/python/strands.multiagent.spec/index.md)
 - [strands.multiagent.swarm](https://strandsagents.com/docs/api/python/strands.multiagent.swarm/index.md)
 - [strands.plugins.decorator](https://strandsagents.com/docs/api/python/strands.plugins.decorator/index.md)
 - [strands.plugins.multiagent_plugin](https://strandsagents.com/docs/api/python/strands.plugins.multiagent_plugin/index.md)

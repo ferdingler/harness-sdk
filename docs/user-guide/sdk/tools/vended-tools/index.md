@@ -26,7 +26,7 @@ const agent = new Agent({
 | [HTTP Request](#http-request) | Make HTTP requests to external APIs | Python, TypeScript (Node.js 22+, browsers) |
 | [Notebook](#notebook) | Manage persistent text notebooks | Python, TypeScript (Node.js, browsers) |
 | [Bash](#bash) | Execute shell commands with persistent sessions | Python, TypeScript (Node.js, Unix/Linux/macOS) |
-| [MCP Router](#mcp-router) | Connect to Model Context Protocol servers on a developer-set allowlist | Python |
+| [MCP Router](#mcp-router) | Connect to Model Context Protocol servers on a developer-set allowlist | Python, TypeScript (Node.js) |
 | [Sleep](#sleep) | Pause execution for a bounded, cancellable duration | Python, TypeScript (Node.js, browsers) |
 | [Handoff to User](#handoff-to-user) | Pause the agent loop and surface a message to the user | Python, TypeScript (Node.js, browsers) |
 | [Stop](#stop-experimental) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
@@ -596,13 +596,33 @@ The tool exposes five commands: `connect` (opens a named connection to an allowl
 
 Connections are scoped per agent and persist across invocations on the same agent instance. A connection is closed when the model calls `disconnect` explicitly, or when the agent is garbage collected. The connection remains open otherwise.
 
-*Supported in: all platforms (Python).*
+*Supported in: Node.js (TypeScript); all platforms (Python).*
 
 Security Warning
 
 The allowlist controls which servers the model may connect to. For HTTP servers, treat this like any network request — egress control belongs at the encapsulation layer. For stdio servers, the allowlisted command is spawned as a local process with access to the host filesystem, environment variables, and network. Only allowlist commands you would run directly on the host.
 
 **Example:**
+
+(( tab "TypeScript" ))
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { makeMcpRouter } from '@strands-agents/sdk/vended-tools/mcp-router'
+
+const mcpRouter = makeMcpRouter({
+  servers: {
+    files: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'] },
+    'my-api': { url: 'https://mcp.example.com/mcp' },
+  },
+  maxConnections: 5,
+})
+const agent = new Agent({ tools: [mcpRouter] })
+await agent.invoke(
+  "Connect to 'files', list its tools, " +
+  'call the read_file tool on /tmp/hello.txt, then disconnect.'
+)
+```
+(( /tab "TypeScript" ))
 
 (( tab "Python" ))
 ```python
@@ -783,6 +803,7 @@ Tool names are stable and will not change. In minor versions, a tool’s descrip
 - [harness-sdk/strands-ts/src/vended-tools/notebook/notebook.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/notebook/notebook.ts)
 - [harness-sdk/strands-ts/src/vended-tools/sleep/sleep.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/sleep/sleep.ts)
 - [harness-sdk/strands-ts/src/vended-tools/web-fetch/web-fetch.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/web-fetch/web-fetch.ts)
+- [harness-sdk/strands-ts/src/vended-tools/mcp-router/mcp-router.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/mcp-router/mcp-router.ts)
 - [harness-sdk/strands-ts/src/experimental/vended-tools/stop/stop.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/experimental/vended-tools/stop/stop.ts)
 - [harness-sdk/strands-ts/src/vended-tools/a2a-client/a2a-client.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/a2a-client/a2a-client.ts)
 
