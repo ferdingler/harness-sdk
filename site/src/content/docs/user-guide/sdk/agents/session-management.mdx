@@ -839,8 +839,9 @@ or start a new snapshot-backed session, until a dedicated migration path is avai
 a `LocalAgent`, so `save_snapshot()` can capture it, but the sample constructs a regular
 `Agent` and assumes that agent's invocation lifecycle. A Bidi migration must construct an
 equivalent stopped `BidiAgent` and preserve its streaming configuration. After cutover,
-`SnapshotSessionManager` captures Bidi state after each message by default and again when the
-agent stops (configurable with `bidi_agent_save_latest_on`).
+`SnapshotSessionManager` captures Bidi state after each message by default, when the agent
+stops, and before a connection restart. Configure this behavior with
+`bidi_agent_save_latest_on`.
 
 ## Sessions, agents, and concurrency
 
