@@ -775,7 +775,7 @@ async def migrate_session(session_id: str, *, agent_id: str = "default") -> None
     # the broken-tool-use repair all run here. Pass the same conversation_manager /
     # system_prompt the app uses.
     legacy = FileSessionManager(session_id=session_id, storage_dir="./legacy-sessions")
-    agent = Agent(agent_id=agent_id, session_manager=legacy)
+    agent = Agent(agent_id=agent_id, system_prompt=SYSTEM_PROMPT, session_manager=legacy)
 
     if not agent.messages and not agent.state.get():
         raise ValueError(f"no legacy data found for session={session_id!r} agent={agent_id!r}")
