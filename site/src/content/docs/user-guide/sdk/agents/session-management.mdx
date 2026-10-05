@@ -760,6 +760,8 @@ from strands import Agent
 from strands.session import FileSessionManager, SnapshotSessionManager
 from strands.storage import LocalFileStorage
 
+SYSTEM_PROMPT = "<your production system prompt>"
+
 
 async def migrate_session(session_id: str, *, agent_id: str = "default") -> None:
     """Copy one message-log session into snapshot format; stops if already migrated.
