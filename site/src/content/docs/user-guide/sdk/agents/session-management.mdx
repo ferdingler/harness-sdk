@@ -820,7 +820,7 @@ For an `S3SessionManager` source, construct it with `bucket`/`prefix` instead of
 - **Verify, then cut over:**
   1. Dry-run against a copy of the session store.
   2. Attach a `SnapshotSessionManager` to a fresh agent with the same `session_id`/`agent_id`
-     and confirm `agent.messages`, `agent.state.get()`, and conversation-manager state match.
+     and confirm `agent.messages`, `agent.state.get()`, `agent.system_prompt`, and conversation-manager state match.
   3. Cut application code over to `SnapshotSessionManager`.
   4. Delete the legacy data only after verifying the snapshot restores correctly.
 
