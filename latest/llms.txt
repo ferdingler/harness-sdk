@@ -802,6 +802,7 @@
 
 ## Blog
 
+- [Bidi Agents now GA](https://strandsagents.com/blog/bidi-agents-now-ga/index.md): The easiest way to create voice agents with direct support for Amazon Nova Sonic, OpenAI, and Gemini models.
 - [Introducing Strands Decider 2B: a small, open source, decision model](https://strandsagents.com/blog/introducing-strands-decider/index.md): Strands Decider 2B is a small, open source, decision model optimized for fast experimentation, local development, and innovation.
 - [Introducing Strands harness: frontier performance with 28% lower token cost](https://strandsagents.com/blog/introducing-strands-harness/index.md): Strands harness is a fully assembled, customizable, state-of-the-art agent you run locally or deploy anywhere.
 - [Framework-agnostic evaluation with Strands Evals](https://strandsagents.com/blog/framework-agnostic-evaluation-strands-evals/index.md): Strands Evals supports agents built with Claude Agents SDK, OpenAI Agents, Google ADK, and more. Learn how it achieves compatibility with other frameworks and how you can begin writing cross-framework experiments.

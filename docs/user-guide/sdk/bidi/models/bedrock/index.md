@@ -18,7 +18,7 @@ For local audio dependencies and device setup, see [Audio I/O](/docs/user-guide/
 
 ## Credentials
 
-Configure AWS credentials with permission to invoke Nova Sonic in a [supported region](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-2-sonic.html). `BedrockNovaSonicModel` uses Boto3’s [credential chain](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html), including environment variables, named profiles, and IAM roles. See [Setting up AWS credentials](/docs/user-guide/sdk/model-providers/amazon-bedrock/index.md#setting-up-aws-credentials) for shared setup instructions.
+Configure AWS credentials with permission to invoke Nova Sonic in a [supported region](https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html). `BedrockNovaSonicModel` uses Boto3’s [credential chain](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html), including environment variables, named profiles, and IAM roles. See [Setting up AWS credentials](/docs/user-guide/sdk/model-providers/amazon-bedrock/index.md#setting-up-aws-credentials) for shared setup instructions.
 
 To use a named profile, pass a Boto3 session with its region:
 
@@ -28,7 +28,7 @@ import boto3
 from strands.bidi.models import BedrockNovaSonicModel
 
 model = BedrockNovaSonicModel(
-    model_id="amazon.nova-2-sonic-v1:0",
+    model_id="amazon.nova-2-5-sonic",
     boto_session=boto3.Session(profile_name="voice-agent", region_name="us-east-1"),
 )
 ```
@@ -44,7 +44,7 @@ from strands.bidi.agent import BidiAgent
 from strands.bidi.models import BedrockNovaSonicModel
 
 model = BedrockNovaSonicModel(
-    model_id="amazon.nova-2-sonic-v1:0",
+    model_id="amazon.nova-2-5-sonic",
     region="us-east-1",
     voice="tiffany",
     audio={"output": {"sample_rate": 24000}},
@@ -64,7 +64,7 @@ Pass Nova Sonic’s [session settings](https://docs.aws.amazon.com/nova/latest/n
 from strands.bidi.models import BedrockNovaSonicModel
 
 model = BedrockNovaSonicModel(
-    model_id="amazon.nova-2-sonic-v1:0",
+    model_id="amazon.nova-2-5-sonic",
     params={"turnDetectionConfiguration": {"endpointingSensitivity": "LOW"}},
 )
 ```

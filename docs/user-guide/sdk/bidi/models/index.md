@@ -29,7 +29,7 @@ Every provider accepts the same core options, so moving between providers keeps 
 from strands.bidi.models import BedrockNovaSonicModel
 
 model = BedrockNovaSonicModel(
-    model_id="amazon.nova-2-sonic-v1:0",
+    model_id="amazon.nova-2-5-sonic",
     voice="tiffany",
     params={"inferenceConfiguration": {"temperature": 0.7}},
 )
