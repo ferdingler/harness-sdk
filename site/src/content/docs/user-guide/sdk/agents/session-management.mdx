@@ -726,8 +726,11 @@ configuration-dependent. Specifically:
 - **Broken tool-use pairs** — an orphaned `toolUse` is repaired automatically by the legacy
   restore; the procedure below inherits that repair.
 
-Two rules: never mutate the source session, and stop (don't overwrite) if the target already
-holds a snapshot.
+Two rules: do not overwrite existing legacy records, and stop (don't overwrite) if the target
+already holds a snapshot. Validate every `session_id` and `agent_id` against the source store
+before constructing the legacy manager. Repository-backed legacy managers create empty session
+or agent records for unknown identifiers, so a mistyped identifier mutates the source store even
+though no existing data is overwritten.
 
 ### Reference procedure: restore through the legacy manager, then snapshot
 
@@ -755,7 +758,11 @@ from strands.storage import LocalFileStorage
 
 
 async def migrate_session(session_id: str, *, agent_id: str = "default") -> None:
-    """Copy one message-log session into snapshot format. Non-destructive; stops if already migrated.
+    """Copy one message-log session into snapshot format; stops if already migrated.
+
+    This function does not overwrite existing legacy records. Validate the source session and
+    agent identifiers before calling it because repository-backed legacy managers create empty
+    records for unknown identifiers.
 
     Build `legacy` and `snapshot` to match your application's real configuration — same
     conversation manager, system prompt, model, and tools — so restore reconstructs the
