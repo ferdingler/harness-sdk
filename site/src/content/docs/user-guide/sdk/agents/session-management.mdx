@@ -720,8 +720,12 @@ configuration-dependent. Specifically:
   `agent_id` in a session separately.
 - **Conversation manager** — same type and settings; its state includes `removed_message_count`,
   which sets the resume offset.
-- **System prompt and model state** — part of a faithful restore (see the stateful-model note
-  under [How session management works](#how-session-management-works)).
+- **System prompt:** Pass the same prompt as the production agent. Message-log session
+  managers do not restore it, and the snapshot records the prompt configured on the
+  migrating agent.
+- **Model state:** Restored automatically from the legacy session. For stateful models,
+  the managers restore model state but not local messages because the model provider
+  manages conversation history server-side.
 - **Redacted messages** — the applied (redacted) content must carry over, not the original.
 - **Broken tool-use pairs** — an orphaned `toolUse` is repaired automatically by the legacy
   restore; the procedure below inherits that repair.
