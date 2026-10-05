@@ -815,11 +815,21 @@ For an `S3SessionManager` source, construct it with `bucket`/`prefix` instead of
 
 ### Multi-agent and BidiAgent sessions
 
-Graph/Swarm orchestrators and `BidiAgent` are also supported, but do not use the single-agent
-capture above — orchestrator snapshots are written through lifecycle hooks, and a `BidiAgent`
-is captured when it stops. Migrate the whole orchestrator (or stopped Bidi agent) as one unit
-through its legacy manager, then re-capture it through the snapshot manager via the same
-object, so topology, shared context, and resume position are preserved.
+The single-agent `migrate_session()` example above does **not** work for Graph or Swarm
+sessions. It creates a local `Agent` and passes that agent to
+`SnapshotSessionManager.save_snapshot()`, but Graph/Swarm session state belongs to the
+orchestrator: topology, shared context, and resume position are not recoverable by migrating
+each node independently. The public multi-agent snapshot path runs through orchestrator
+lifecycle hooks during an actual invocation; there is no public `save_snapshot(orchestrator)`
+API for a one-shot conversion. Keep existing multi-agent sessions on their legacy manager,
+or start a new snapshot-backed session, until a dedicated migration path is available.
+
+`BidiAgent` also requires a separate adaptation rather than using the sample unchanged. It is
+a `LocalAgent`, so `save_snapshot()` can capture it, but the sample constructs a regular
+`Agent` and assumes that agent's invocation lifecycle. A Bidi migration must construct an
+equivalent stopped `BidiAgent` and preserve its streaming configuration. After cutover,
+`SnapshotSessionManager` captures Bidi state after each message by default and again when the
+agent stops (configurable with `bidi_agent_save_latest_on`).
 
 ## Sessions, agents, and concurrency
 
