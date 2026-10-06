@@ -35,7 +35,6 @@ class MockBidiModel(BidiModel):
 
     def __init__(self, config=None, model_id="mock-model"):
         self._config = config or {"audio": {"input_rate": 16000, "output_rate": 24000, "channels": 1}}
-        self.usage_is_cumulative = False
         self._config["model_id"] = model_id
         self._connection_id = None
         self._started = False
@@ -392,7 +391,7 @@ def test_bidi_agent_init_with_default_model(options):
     agent = BidiAgent(**options)
 
     assert isinstance(agent.model, BedrockNovaSonicModel)
-    assert agent.model.model_id == "amazon.nova-2-sonic-v1:0"
+    assert agent.model.model_id == "amazon.nova-2-5-sonic"
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="BedrockNovaSonicModel is only supported for Python 3.12+")
