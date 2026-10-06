@@ -1,7 +1,8 @@
 // Parity mirror of strands-py/tests/strands/models/test_strict_schema.py.
 // Keep the cases aligned with the Python file so the two SDKs stay in parity.
 import { describe, it, expect, vi } from 'vitest'
-import { ensureStrictJsonSchema } from '../_strict-schema.js'
+import { ensureStrictJsonSchema, findUnsupportedStrictKeywords } from '../_strict-schema.js'
+import { deepCopy } from '../../types/json.js'
 import type { JSONSchema } from '../../types/json.js'
 import { logger } from '../../logging/logger.js'
 
@@ -82,7 +83,9 @@ describe('ensureStrictJsonSchema', () => {
         schema({
           type: 'object',
           properties: { item: { $ref: '#/$defs/MyItem', description: 'An item' } },
-          $defs: { MyItem: { type: 'object', properties: { name: { type: 'string' } } } },
+          $defs: {
+            MyItem: { type: 'object', description: 'from $defs', properties: { name: { type: 'string' } } },
+          },
         })
       )
     )
@@ -276,5 +279,107 @@ describe('ensureStrictJsonSchema', () => {
     expect(node).toEqual({ $ref: '#/definitions/Filter', description: 'sub' })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('ref=<#/definitions/Filter> | recursive $ref'))
     warn.mockRestore()
+  })
+
+  it('does not mutate nested objects or $defs of the original', () => {
+    const original = schema({
+      type: 'object',
+      properties: {
+        outer: { type: 'object', properties: { inner: { type: 'string' } } },
+        item: { $ref: '#/$defs/Item', description: 'an item' },
+      },
+      $defs: { Item: { type: 'object', properties: { name: { type: 'string' } } } },
+    })
+    const snapshot = deepCopy(original)
+
+    ensureStrictJsonSchema(original)
+
+    expect(original).toEqual(snapshot)
+  })
+
+  it('closes an object whose type is a union including object', () => {
+    const result = ensureStrictJsonSchema(
+      schema({
+        type: 'object',
+        properties: { addr: { type: ['object', 'null'], properties: { city: { type: 'string' } } } },
+      })
+    )
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        addr: { type: ['object', 'null'], properties: { city: { type: 'string' } }, additionalProperties: false },
+      },
+      additionalProperties: false,
+    })
+  })
+
+  it('closes objects inside a schema-valued additionalProperties', () => {
+    const result = ensureStrictJsonSchema(
+      schema({
+        type: 'object',
+        additionalProperties: { type: 'object', properties: { v: { type: 'string' } } },
+      })
+    )
+
+    expect(result).toEqual({
+      type: 'object',
+      additionalProperties: { type: 'object', properties: { v: { type: 'string' } }, additionalProperties: false },
+    })
+  })
+
+  it("keeps a $ref target's additionalProperties when the ref node also declares type object", () => {
+    const result = asRecord(
+      ensureStrictJsonSchema(
+        schema({
+          type: 'object',
+          properties: { m: { $ref: '#/$defs/Map', type: 'object' } },
+          $defs: { Map: { type: 'object', additionalProperties: { type: 'string' } } },
+        })
+      )
+    )
+
+    expect((result['properties'] as Record<string, unknown>)['m']).toEqual({
+      type: 'object',
+      additionalProperties: { type: 'string' },
+    })
+  })
+})
+
+describe('findUnsupportedStrictKeywords', () => {
+  it('returns nothing for a closed schema without bounds', () => {
+    const strict = ensureStrictJsonSchema(
+      schema({
+        type: 'object',
+        properties: { a: { type: 'string' }, b: { type: 'array', items: { type: 'integer' } } },
+      })
+    )
+
+    expect(findUnsupportedStrictKeywords(strict)).toEqual([])
+  })
+
+  it('reports open additionalProperties and bounds anywhere in the schema, sorted and deduplicated', () => {
+    const keywords = findUnsupportedStrictKeywords(
+      schema({
+        type: 'object',
+        properties: {
+          headers: { type: 'object', additionalProperties: { type: 'string', maxLength: 10 } },
+          count: { type: 'integer', minimum: 0, maximum: 5 },
+          tags: { type: 'array', items: { type: 'string', minLength: 1 } },
+        },
+        $defs: { Step: { type: 'number', multipleOf: 2, minimum: 1 } },
+        additionalProperties: false,
+      })
+    )
+
+    expect(keywords).toEqual(['additionalProperties', 'maxLength', 'maximum', 'minLength', 'minimum', 'multipleOf'])
+  })
+
+  it('does not treat property names as keywords', () => {
+    const keywords = findUnsupportedStrictKeywords(
+      schema({ type: 'object', properties: { minimum: { type: 'number' } }, additionalProperties: false })
+    )
+
+    expect(keywords).toEqual([])
   })
 })

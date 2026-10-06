@@ -27,6 +27,38 @@ export function ensureStrictJsonSchema(schema: JSONSchema, requireAllProperties 
   return schemaCopy as JSONSchema
 }
 
+/** Keywords whose value is a map of subschemas. */
+const SCHEMA_MAP_KEYWORDS = ['$defs', 'definitions', 'properties']
+/** Keywords whose value is a list of subschemas. */
+const SCHEMA_LIST_KEYWORDS = ['anyOf', 'allOf', 'oneOf']
+/** Keywords whose value is a single subschema. */
+const SCHEMA_VALUE_KEYWORDS = ['items', 'additionalProperties']
+
+/** Keywords outside Bedrock's strict-mode subset that the transform does not rewrite. */
+const UNSUPPORTED_STRICT_KEYWORDS = ['minimum', 'maximum', 'multipleOf', 'minLength', 'maxLength']
+
+/** Return the direct subschemas of `schema`, including `$defs`/`definitions` entries. */
+function childSchemas(schema: SchemaNode): SchemaNode[] {
+  const children: (JSONValue | undefined)[] = []
+  for (const keyword of SCHEMA_MAP_KEYWORDS) {
+    const map = schema[keyword]
+    if (isRecord(map)) children.push(...Object.values(map))
+  }
+  for (const keyword of SCHEMA_LIST_KEYWORDS) {
+    const list = schema[keyword]
+    if (Array.isArray(list)) children.push(...list)
+  }
+  for (const keyword of SCHEMA_VALUE_KEYWORDS) {
+    children.push(schema[keyword])
+  }
+  return children.filter(isRecord)
+}
+
+function isObjectType(schema: SchemaNode): boolean {
+  const type = schema['type']
+  return type === 'object' || (Array.isArray(type) && type.includes('object'))
+}
+
 /**
  * Apply strict-mode constraints to `schema` in place. `root` resolves `$ref` pointers; `inlining`
  * holds the refs being inlined on the current path so recursive refs terminate.
@@ -37,66 +69,63 @@ function applyStrict(
   requireAllProperties: boolean,
   inlining: ReadonlySet<string> = new Set()
 ): void {
-  for (const defsKey of ['$defs', 'definitions']) {
-    const defs = schema[defsKey]
-    if (isRecord(defs)) {
-      for (const defSchema of Object.values(defs)) {
-        if (isRecord(defSchema)) {
-          applyStrict(defSchema, root, requireAllProperties, inlining)
-        }
-      }
-    }
-  }
-
-  if (schema['type'] === 'object' && !('additionalProperties' in schema)) {
+  // A node still carrying a $ref is left for the inline below, so the target's own value wins.
+  if (isObjectType(schema) && !('additionalProperties' in schema) && !('$ref' in schema)) {
     schema['additionalProperties'] = false
   }
 
   const properties = schema['properties']
-  if (isRecord(properties)) {
-    if (requireAllProperties) {
-      schema['required'] = Object.keys(properties)
-    }
-    for (const propSchema of Object.values(properties)) {
-      if (isRecord(propSchema)) {
-        applyStrict(propSchema, root, requireAllProperties, inlining)
-      }
-    }
+  if (requireAllProperties && isRecord(properties)) {
+    schema['required'] = Object.keys(properties)
   }
 
-  const items = schema['items']
-  if (isRecord(items)) {
-    applyStrict(items, root, requireAllProperties, inlining)
-  }
-
-  for (const combinatorKey of ['anyOf', 'allOf', 'oneOf']) {
-    const variants = schema[combinatorKey]
-    if (Array.isArray(variants)) {
-      for (const variant of variants) {
-        if (isRecord(variant)) {
-          applyStrict(variant, root, requireAllProperties, inlining)
-        }
-      }
-    }
+  for (const child of childSchemas(schema)) {
+    applyStrict(child, root, requireAllProperties, inlining)
   }
 
   // A $ref alongside sibling keys must be inlined; existing keys win over the resolved schema.
   const ref = schema['$ref']
-  if (typeof ref === 'string' && Object.keys(schema).length > 1) {
-    if (inlining.has(ref)) {
-      warnOnce(logger, `ref=<${ref}> | recursive $ref cannot be inlined, leaving it unresolved`)
-      return
-    }
-    const resolved = resolveRef(root, ref)
-    if (isRecord(resolved)) {
-      const merged: SchemaNode = { ...(JSON.parse(JSON.stringify(resolved)) as SchemaNode), ...schema }
-      delete merged['$ref']
-      for (const key of Object.keys(schema)) {
-        delete schema[key]
-      }
-      Object.assign(schema, merged)
-      applyStrict(schema, root, requireAllProperties, new Set(inlining).add(ref))
-    }
+  if (typeof ref !== 'string' || Object.keys(schema).length <= 1) {
+    return
+  }
+  if (inlining.has(ref)) {
+    warnOnce(logger, `ref=<${ref}> | recursive $ref cannot be inlined, leaving it unresolved`)
+    return
+  }
+  const resolved = resolveRef(root, ref)
+  if (!isRecord(resolved)) {
+    return
+  }
+  const merged: SchemaNode = { ...(JSON.parse(JSON.stringify(resolved)) as SchemaNode), ...schema }
+  delete merged['$ref']
+  for (const key of Object.keys(schema)) {
+    delete schema[key]
+  }
+  Object.assign(schema, merged)
+  applyStrict(schema, root, requireAllProperties, new Set(inlining).add(ref))
+}
+
+/**
+ * Return the keywords in `schema` that Bedrock's strict mode rejects, sorted: any
+ * `additionalProperties` other than `false`, and numeric/length bounds.
+ *
+ * @internal
+ */
+export function findUnsupportedStrictKeywords(schema: JSONSchema): string[] {
+  const found = new Set<string>()
+  collectUnsupportedKeywords(schema as SchemaNode, found)
+  return [...found].sort()
+}
+
+function collectUnsupportedKeywords(schema: SchemaNode, found: Set<string>): void {
+  for (const keyword of UNSUPPORTED_STRICT_KEYWORDS) {
+    if (keyword in schema) found.add(keyword)
+  }
+  if ('additionalProperties' in schema && schema['additionalProperties'] !== false) {
+    found.add('additionalProperties')
+  }
+  for (const child of childSchemas(schema)) {
+    collectUnsupportedKeywords(child, found)
   }
 }
 

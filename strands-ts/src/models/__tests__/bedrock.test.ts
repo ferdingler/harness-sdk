@@ -699,8 +699,6 @@ describe('BedrockModel', () => {
 
     // Parity mirror of the strict_tools cases in strands-py test_bedrock.py.
     // Keep aligned with the Python file so the two SDKs stay in parity.
-    // Python's separate strict_tools_false / strict_tools_none cases are merged here into one
-    // false/unset case: same behavior, fewer tests.
     describe('strictTools', () => {
       const toolSpec = (inputSchema: object) => ({
         name: 'calc',
@@ -710,7 +708,7 @@ describe('BedrockModel', () => {
       const lastTools = () => {
         const call = vi.mocked(ConverseStreamCommand).mock.lastCall?.[0]
         return (call?.toolConfig?.tools ?? []) as Array<{
-          toolSpec?: { strict?: boolean; inputSchema?: { json?: unknown } }
+          toolSpec?: { name?: string; description?: string; strict?: boolean; inputSchema?: { json?: unknown } }
         }>
       }
 
@@ -723,13 +721,15 @@ describe('BedrockModel', () => {
           })
         )
 
-        const spec = lastTools()[0]!.toolSpec!
-        expect(spec.strict).toBe(true)
-        expect(spec.inputSchema!.json).toEqual({
-          type: 'object',
-          properties: { a: { type: 'string' } },
-          additionalProperties: false,
+        expect(lastTools()[0]!.toolSpec).toStrictEqual({
+          name: 'calc',
+          description: 'Calculator',
+          inputSchema: {
+            json: { type: 'object', properties: { a: { type: 'string' } }, additionalProperties: false },
+          },
+          strict: true,
         })
+        expect(warnOnce).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('strict mode rejects'))
       })
 
       it('does not mutate the caller-provided input schema', () => {
@@ -738,6 +738,7 @@ describe('BedrockModel', () => {
         const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
         collectIterator(provider.stream(messages, { toolSpecs: [toolSpec(inputSchema)] }))
 
+        expect(lastTools()[0]!.toolSpec!.inputSchema!.json).toHaveProperty('additionalProperties', false)
         expect('additionalProperties' in inputSchema).toBe(false)
       })
 
@@ -757,6 +758,25 @@ describe('BedrockModel', () => {
           properties: { a: { type: 'string' } },
           additionalProperties: true,
         })
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('tool=<calc>, keywords=<additionalProperties> | tool schema uses keywords')
+        )
+      })
+
+      it('warns with the tool name and keywords when a schema uses bounds', () => {
+        const provider = new BedrockModel({ strictTools: true })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(
+          provider.stream(messages, {
+            toolSpecs: [toolSpec({ type: 'object', properties: { n: { type: 'integer', minimum: 0, maximum: 9 } } })],
+          })
+        )
+
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('tool=<calc>, keywords=<maximum,minimum> | tool schema uses keywords')
+        )
       })
 
       it('patches nested object schemas', () => {

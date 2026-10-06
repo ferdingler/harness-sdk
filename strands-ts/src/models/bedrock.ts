@@ -62,13 +62,13 @@ import type { ContentBlock, Message, StopReason, ToolUseBlock } from '../types/m
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
 import type { CitationsDelta, ModelStreamEvent, ReasoningContentDelta, Usage } from '../models/streaming.js'
 import type { Citation, CitationLocation, CitationsBlockData } from '../types/citations.js'
-import type { JSONValue } from '../types/json.js'
+import type { JSONSchema, JSONValue } from '../types/json.js'
 import { ContextWindowOverflowError, ModelThrottledError, ProviderTokenCountError, normalizeError } from '../errors.js'
 import { ensureDefined } from '../types/validation.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { NOOP_TOOL_SPEC } from '../tools/noop-tool.js'
-import { ensureStrictJsonSchema } from './_strict-schema.js'
+import { ensureStrictJsonSchema, findUnsupportedStrictKeywords } from './_strict-schema.js'
 import { MODEL_DEFAULTS, defaultModelWarningMessage } from './defaults.js'
 
 const DEFAULT_BEDROCK_REGION_SUPPORTS_FIP = false
@@ -319,11 +319,17 @@ export interface BedrockModelConfig extends BaseModelConfig {
   useNativeTokenCount?: boolean
 
   /**
-   * Apply strict (structured-output) enforcement to every tool sent to this model.
+   * Constrain the model to emit tool names and inputs that conform to each tool's schema.
    *
-   * When `true`, injects `strict: true` into each `toolSpec`. Incompatible with citations
-   * for Anthropic models.
+   * When `true`, every tool is sent with `strict: true` and a copy of its `inputSchema` with
+   * `additionalProperties: false` added to each object type, so a free-form `{ type: 'object' }`
+   * parameter becomes one the model can only fill with `{}`. Bedrock rejects schemas that use
+   * features outside its strict subset (recursive or external `$ref`, `minimum`/`maximum`/
+   * `multipleOf`, `minLength`/`maxLength`, `additionalProperties` other than `false`) with a 400
+   * at request time, and compiles each new schema on first use, which can take minutes.
+   * Incompatible with citations for Anthropic models.
    *
+   * @see https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
    * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolSpecification.html
    *
    * @defaultValue false
@@ -803,7 +809,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
               name: spec.name,
               description: spec.description,
               inputSchema: {
-                json: strictTools && spec.inputSchema ? ensureStrictJsonSchema(spec.inputSchema) : spec.inputSchema,
+                json:
+                  strictTools && spec.inputSchema ? toStrictInputSchema(spec.name, spec.inputSchema) : spec.inputSchema,
               },
               ...(strictTools ? { strict: true } : {}),
             },
@@ -2058,6 +2065,22 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     return events
   }
+}
+
+/**
+ * Return the strict-mode copy of a tool's input schema, warning once per tool when it still uses
+ * keywords Bedrock's strict mode rejects.
+ */
+function toStrictInputSchema(toolName: string, inputSchema: JSONSchema): JSONSchema {
+  const strictSchema = ensureStrictJsonSchema(inputSchema)
+  const unsupported = findUnsupportedStrictKeywords(strictSchema)
+  if (unsupported.length > 0) {
+    warnOnce(
+      logger,
+      `tool=<${toolName}>, keywords=<${unsupported.join(',')}> | tool schema uses keywords bedrock strict mode rejects, request may fail`
+    )
+  }
+  return strictSchema
 }
 
 /**
