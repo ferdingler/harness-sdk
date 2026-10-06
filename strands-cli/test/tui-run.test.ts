@@ -298,7 +298,6 @@ describe('runInkChat', () => {
     } as unknown as Instance
     const renderApp = vi.fn((_element: unknown) => instance)
     const sigintListeners = process.listenerCount('SIGINT')
-    const exitListeners = process.listenerCount('exit')
 
     const exitCode = await runInkChat(controller, {
       output,
@@ -315,14 +314,12 @@ describe('runInkChat', () => {
     expect(cleanup).toHaveBeenCalledOnce()
     expect(target.dispose).toHaveBeenCalledOnce()
     expect(process.listenerCount('SIGINT')).toBe(sigintListeners)
-    expect(process.listenerCount('exit')).toBe(exitListeners)
   })
 
   it('restores the terminal when Ink fails to mount', async () => {
     const controller = new ChatController(backend())
     const writes: string[] = []
     const output = { write: (value: string) => writes.push(value) } as unknown as NodeJS.WriteStream
-    const exitListeners = process.listenerCount('exit')
 
     await expect(
       runInkChat(controller, {
@@ -334,7 +331,6 @@ describe('runInkChat', () => {
       })
     ).rejects.toThrow('render failed')
     expect(writes.at(-1)).toContain('?1049l')
-    expect(process.listenerCount('exit')).toBe(exitListeners)
   })
 
   it('cancels startup MCP trust with Ctrl-C and restores the terminal before forced exit', async () => {

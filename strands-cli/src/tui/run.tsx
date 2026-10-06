@@ -53,25 +53,12 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   let leaveTerminalMode = (): void => {}
   const renderApp = options.renderApp ?? render
   const hardExit = (exitCode: number): never => {
-    restoreTerminal()
+    leaveTerminalMode()
     return hardExitProcessTree(exitCode)
   }
   let controller: ChatControllerApi | undefined
   let controllerFactory: ChatControllerFactory | undefined
   let instance: Instance | undefined
-  let terminalRestored = false
-  const restoreTerminal = (): void => {
-    if (terminalRestored) return
-    terminalRestored = true
-    process.off('exit', restoreTerminal)
-    try {
-      // React cleanup can enable mouse reporting, so unmount before resetting the terminal.
-      instance?.unmount()
-      instance?.cleanup()
-    } finally {
-      leaveTerminalMode()
-    }
-  }
   const startTasks: Promise<void>[] = []
   let pendingExitCode: number | undefined
   let replacementTask: Promise<void> | undefined
@@ -230,7 +217,6 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   process.on('SIGINT', onSigint)
   process.on('SIGTERM', onSigterm)
   process.on('SIGHUP', onSighup)
-  process.once('exit', restoreTerminal)
 
   try {
     if (typeof source === 'function') {
@@ -277,7 +263,9 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     process.off('SIGINT', onSigint)
     process.off('SIGTERM', onSigterm)
     process.off('SIGHUP', onSighup)
-    restoreTerminal()
+    instance?.unmount()
+    instance?.cleanup()
+    leaveTerminalMode()
 
     const hardExitCode = controller?.hardExitCode
     if (hardExitCode !== undefined) {
