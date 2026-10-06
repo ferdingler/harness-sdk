@@ -1,8 +1,9 @@
 // Parity mirror of strands-py/tests/strands/models/test_strict_schema.py.
 // Keep the cases aligned with the Python file so the two SDKs stay in parity.
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { ensureStrictJsonSchema } from '../_strict-schema.js'
 import type { JSONSchema } from '../../types/json.js'
+import { logger } from '../../logging/logger.js'
 
 const schema = (value: object): JSONSchema => value as unknown as JSONSchema
 const asRecord = (value: JSONSchema): Record<string, unknown> => value as unknown as Record<string, unknown>
@@ -244,5 +245,36 @@ describe('ensureStrictJsonSchema', () => {
 
     expect(result['additionalProperties']).toBe(false)
     expect('$ref' in (result['properties'] as Record<string, Record<string, unknown>>)['item']!).toBe(true)
+  })
+
+  it('terminates on a recursive $ref with sibling keys, leaving the cycle point unresolved', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const result = asRecord(
+      ensureStrictJsonSchema(
+        schema({
+          type: 'object',
+          properties: { filter: { $ref: '#/definitions/Filter', description: 'root filter' } },
+          definitions: {
+            Filter: {
+              type: 'object',
+              properties: { and: { type: 'array', items: { $ref: '#/definitions/Filter', description: 'sub' } } },
+            },
+          },
+        })
+      )
+    )
+
+    type Node = Record<string, unknown>
+    const filter = (result['properties'] as Record<string, Node>)['filter']!
+    expect(filter['description']).toBe('root filter')
+    expect(filter['additionalProperties']).toBe(false)
+
+    let node: Node = filter
+    while (!('$ref' in node)) {
+      node = (node['properties'] as Record<string, Node>)['and']!['items'] as Node
+    }
+    expect(node).toEqual({ $ref: '#/definitions/Filter', description: 'sub' })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ref=<#/definitions/Filter> | recursive $ref'))
+    warn.mockRestore()
   })
 })

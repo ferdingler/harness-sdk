@@ -7,6 +7,7 @@
 
 import type { JSONSchema, JSONValue } from '../types/json.js'
 import { logger } from '../logging/logger.js'
+import { warnOnce } from '../logging/warn-once.js'
 
 type SchemaNode = Record<string, JSONValue>
 
@@ -26,14 +27,22 @@ export function ensureStrictJsonSchema(schema: JSONSchema, requireAllProperties 
   return schemaCopy as JSONSchema
 }
 
-/** Apply strict-mode constraints to `schema` in place. `root` resolves `$ref` pointers. */
-function applyStrict(schema: SchemaNode, root: SchemaNode, requireAllProperties: boolean): void {
+/**
+ * Apply strict-mode constraints to `schema` in place. `root` resolves `$ref` pointers; `inlining`
+ * holds the refs being inlined on the current path so recursive refs terminate.
+ */
+function applyStrict(
+  schema: SchemaNode,
+  root: SchemaNode,
+  requireAllProperties: boolean,
+  inlining: ReadonlySet<string> = new Set()
+): void {
   for (const defsKey of ['$defs', 'definitions']) {
     const defs = schema[defsKey]
     if (isRecord(defs)) {
       for (const defSchema of Object.values(defs)) {
         if (isRecord(defSchema)) {
-          applyStrict(defSchema, root, requireAllProperties)
+          applyStrict(defSchema, root, requireAllProperties, inlining)
         }
       }
     }
@@ -50,14 +59,14 @@ function applyStrict(schema: SchemaNode, root: SchemaNode, requireAllProperties:
     }
     for (const propSchema of Object.values(properties)) {
       if (isRecord(propSchema)) {
-        applyStrict(propSchema, root, requireAllProperties)
+        applyStrict(propSchema, root, requireAllProperties, inlining)
       }
     }
   }
 
   const items = schema['items']
   if (isRecord(items)) {
-    applyStrict(items, root, requireAllProperties)
+    applyStrict(items, root, requireAllProperties, inlining)
   }
 
   for (const combinatorKey of ['anyOf', 'allOf', 'oneOf']) {
@@ -65,7 +74,7 @@ function applyStrict(schema: SchemaNode, root: SchemaNode, requireAllProperties:
     if (Array.isArray(variants)) {
       for (const variant of variants) {
         if (isRecord(variant)) {
-          applyStrict(variant, root, requireAllProperties)
+          applyStrict(variant, root, requireAllProperties, inlining)
         }
       }
     }
@@ -74,6 +83,10 @@ function applyStrict(schema: SchemaNode, root: SchemaNode, requireAllProperties:
   // A $ref alongside sibling keys must be inlined; existing keys win over the resolved schema.
   const ref = schema['$ref']
   if (typeof ref === 'string' && Object.keys(schema).length > 1) {
+    if (inlining.has(ref)) {
+      warnOnce(logger, `ref=<${ref}> | recursive $ref cannot be inlined, leaving it unresolved`)
+      return
+    }
     const resolved = resolveRef(root, ref)
     if (isRecord(resolved)) {
       const merged: SchemaNode = { ...(JSON.parse(JSON.stringify(resolved)) as SchemaNode), ...schema }
@@ -82,7 +95,7 @@ function applyStrict(schema: SchemaNode, root: SchemaNode, requireAllProperties:
         delete schema[key]
       }
       Object.assign(schema, merged)
-      applyStrict(schema, root, requireAllProperties)
+      applyStrict(schema, root, requireAllProperties, new Set(inlining).add(ref))
     }
   }
 }
