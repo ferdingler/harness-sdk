@@ -14,7 +14,7 @@ ignores the installed line doesn't need.
 """
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from datetime import timedelta
 from typing import Any
@@ -155,7 +155,11 @@ async def call_tool(
     """
     if not MCP_V2:
         return await session.call_tool(
-            name, arguments, read_timeout_seconds, progress_callback=progress_callback, meta=meta
+            name,
+            arguments,
+            read_timeout_seconds,  # type: ignore[arg-type]
+            progress_callback=progress_callback,
+            meta=meta,
         )
 
     timeout = read_timeout(read_timeout_seconds)
@@ -205,7 +209,7 @@ def client_credentials_auth(
             client_secret=client_secret,
             scope=scope,  # type: ignore[call-arg]
         )
-    return ClientCredentialsOAuthProvider(
+    return ClientCredentialsOAuthProvider(  # type: ignore[return-value]
         server_url=server_url,
         storage=storage,
         client_id=client_id,
@@ -580,6 +584,101 @@ async def tools_changed_subscription(session: ClientSession) -> AsyncIterator[An
         yield subscription
 
 
+def _wrap_auth_for_httpx2(auth: httpx.Auth | None) -> Any:
+    """Translate an `httpx.Auth` handler into the auth protocol mcp 2.x expects.
+
+    mcp 2.x is built on `httpx2`, whose client rejects `httpx.Auth` instances at construction. The two Auth protocols
+    are identical apart from their request and response model classes, so an `httpx.Auth` is driven through an adapter
+    that converts the models at each step of the flow. Values that are not `httpx.Auth` instances, which includes the
+    `httpx2.Auth` implementations such as the 2.x OAuth providers, pass through unchanged.
+
+    The adapter sends whatever request the flow yields. Header and URL changes to the original request are copied back
+    onto it, and a step aimed at another URL (httpx's token-refresh pattern) is sent as its own request. Response
+    bodies handed to the flow are already decoded, so their wire framing headers (`content-encoding`,
+    `content-length`, `transfer-encoding`) are dropped. The adapter is async-only because every mcp 2.x transport
+    drives auth through an async client.
+    """
+    # Non-`httpx.Auth` values return before the httpx2 import so this path also
+    # works where httpx2 is absent (the mcp 1.x install with `MCP_V2` forced on
+    # in unit tests).
+    if not isinstance(auth, httpx.Auth):
+        return auth
+
+    import httpx2  # type: ignore[import-not-found]
+
+    wrapped = auth
+
+    def _loaded_content(request: Any) -> bytes | None:
+        # A flow may read `request.content` without declaring `requires_request_body`;
+        # hand it the body whenever httpx2 already has it in memory.
+        try:
+            return request.content  # type: ignore[no-any-return]
+        except httpx2.RequestNotRead:
+            return None
+
+    async def _outgoing_request(request: Any, translated_request: httpx.Request, step: httpx.Request) -> Any:
+        if step is translated_request:
+            request.headers = httpx2.Headers(step.headers.raw)
+            if str(step.url) != str(request.url):
+                request.url = httpx2.URL(str(step.url))
+            return request
+        # The flow issued its own request (httpx's token-refresh pattern): send
+        # that request, never the original one, so its target and body are honored.
+        # Only the timeout carries over from the original request's extensions;
+        # the rest (such as `sni_hostname`) is specific to the original host.
+        timeout_extension = {key: value for key, value in request.extensions.items() if key == "timeout"}
+        return httpx2.Request(
+            str(step.method),
+            str(step.url),
+            headers=step.headers.raw,
+            content=await step.aread(),
+            extensions=timeout_extension,
+        )
+
+    def _translate_response(response: Any, response_body: bytes, step: httpx.Request) -> httpx.Response:
+        # `response_body` is already decoded, so the wire framing headers no longer
+        # describe it; keeping `content-encoding` would make httpx decode it again.
+        headers = [
+            (name, value)
+            for name, value in response.headers.raw
+            if name.lower() not in (b"content-encoding", b"content-length", b"transfer-encoding")
+        ]
+        return httpx.Response(response.status_code, headers=headers, content=response_body, request=step)
+
+    class _HttpxAuthAdapter(httpx2.Auth):  # type: ignore[misc]
+        """Drives an `httpx.Auth` flow with httpx2 request and response models."""
+
+        requires_request_body = wrapped.requires_request_body
+        requires_response_body = wrapped.requires_response_body
+
+        async def async_auth_flow(self, request: Any) -> AsyncGenerator[Any, Any]:
+            if wrapped.requires_request_body:
+                await request.aread()
+            translated_request = httpx.Request(
+                str(request.method), str(request.url), headers=request.headers.raw, content=_loaded_content(request)
+            )
+            flow = wrapped.async_auth_flow(translated_request)
+            try:
+                step = await flow.__anext__()
+                while True:
+                    response = yield await _outgoing_request(request, translated_request, step)
+                    response_body = b""
+                    if wrapped.requires_response_body:
+                        await response.aread()
+                        response_body = response.content
+                    try:
+                        step = await flow.asend(_translate_response(response, response_body, step))
+                    except StopAsyncIteration:
+                        return
+            finally:
+                await flow.aclose()
+
+        def sync_auth_flow(self, request: Any) -> Any:
+            raise RuntimeError("this auth adapter only supports async clients; mcp 2.x transports are async")
+
+    return _HttpxAuthAdapter()
+
+
 def streamable_http_transport(
     url: str, headers: dict[str, str] | None = None, auth: httpx.Auth | None = None
 ) -> AbstractAsyncContextManager[Any]:
@@ -607,6 +706,8 @@ def streamable_http_transport(
             streamable_http_client,
         )
 
+        transport_auth = _wrap_auth_for_httpx2(auth)
+
         # `streamable_http_client` closes an HTTPX client only when it created
         # it (`client_provided` check in mcp 2.x), so a caller-provided client
         # must be closed by the caller: enter both context managers together
@@ -614,7 +715,7 @@ def streamable_http_transport(
         @asynccontextmanager
         async def _owned_client_transport() -> AsyncIterator[Any]:
             async with (
-                create_mcp_http_client(headers=headers, auth=auth) as http_client,
+                create_mcp_http_client(headers=headers, auth=transport_auth) as http_client,
                 streamable_http_client(url=url, http_client=http_client) as transport_streams,
             ):
                 yield transport_streams

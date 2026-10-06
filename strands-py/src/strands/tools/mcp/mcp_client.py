@@ -226,13 +226,20 @@ class MCPClient(ToolProvider):
     """
 
     @classmethod
-    def load_servers(cls, config: "str | dict[str, Any]") -> "list[MCPClient]":
+    def load_servers(
+        cls,
+        config: "str | dict[str, Any]",
+        *,
+        continue_on_error: bool = False,
+        prefix_with_server_name: bool = False,
+    ) -> "list[MCPClient]":
         """Create MCPClient instances from an ``mcpServers`` JSON config (file path or mapping).
 
         Returns one client per enabled server. Accepts either a flat mapping of server name to
         config, or that mapping nested under an ``mcpServers`` key. Servers marked
-        ``"disabled": true`` are skipped. When a server sets ``"continue_on_error": true``, a
-        failure resolving its config (e.g. a missing env var) skips that server instead of raising.
+        ``"disabled": true`` are skipped. When a server has ``"continue_on_error": true`` (or the
+        ``continue_on_error`` default is set), a failure resolving its config (e.g. a missing env
+        var) skips that server instead of raising.
 
         Transport is auto-detected from the fields present: ``command`` selects stdio and ``url``
         selects streamable-http. Set ``transport`` explicitly (``"stdio"``, ``"sse"``, or
@@ -243,6 +250,12 @@ class MCPClient(ToolProvider):
         Args:
             config: A file path (with optional ``file://`` prefix) to a JSON config, or a
                 dictionary mapping server names to configs (optionally under an ``mcpServers`` key).
+            continue_on_error: Default ``continue_on_error`` for every server; a server's own
+                ``continue_on_error`` key overrides it.
+            prefix_with_server_name: When True, servers without an explicit ``prefix`` use their config
+                key as the tool name prefix, so same-named tools from different servers no longer
+                collide. Characters outside ``[A-Za-z0-9_-]`` in the key (e.g. the dot in
+                ``awslabs.foo``) are replaced with ``_``. A server can still opt out with ``"prefix": ""``.
 
         Returns:
             One MCPClient per enabled server, ready to pass to ``Agent(tools=...)``.
@@ -253,8 +266,8 @@ class MCPClient(ToolProvider):
             ValueError: If the overall config shape is invalid or a server entry is not a mapping.
                 These are malformed-config errors and always raise, regardless of
                 ``continue_on_error``. A failure building an individual server (e.g. a missing env
-                var) also raises unless that server set ``continue_on_error``, in which case it is
-                skipped.
+                var) also raises unless ``continue_on_error`` applies to that server, in which case
+                it is skipped.
         """
         servers = _load_servers_mapping(config)
 
@@ -272,9 +285,16 @@ class MCPClient(ToolProvider):
                 logger.debug("server_name=<%s> | skipping disabled MCP server", name)
                 continue
             try:
-                clients.append(_build_client_from_config(name, server))
+                clients.append(
+                    _build_client_from_config(
+                        name,
+                        server,
+                        continue_on_error=continue_on_error,
+                        prefix_with_server_name=prefix_with_server_name,
+                    )
+                )
             except Exception as e:
-                if not server.get("continue_on_error", False):
+                if not server.get("continue_on_error", continue_on_error):
                     raise
                 logger.warning("server_name=<%s>, error=<%s> | MCP server config failed, skipping", name, e)
 
@@ -454,6 +474,14 @@ class MCPClient(ToolProvider):
             self.stop(None, None, None)
             raise MCPClientInitializationError(f"the client initialization failed: {e}") from e
         return self
+
+    @property
+    def client_name(self) -> str | None:
+        """The ``application_name`` reported to the server, or ``None`` when unset (see ``__init__``).
+
+        Defaults to the config key for ``load_servers`` clients.
+        """
+        return self._application_name
 
     @property
     def continue_on_error(self) -> bool:
@@ -1506,15 +1534,28 @@ class MCPClient(ToolProvider):
             if not self._init_future.done():
                 self._init_future.set_exception(e)
             else:
+                self._log_debug_with_thread(
+                    "encountered exception on background thread after initialization %s", str(e)
+                )
+
                 # _close_future is automatically cancelled by the framework which doesn't provide us with the useful
                 # exception, so instead we store the exception in a different field where stop() can read it
                 self._close_exception = e
                 if self._close_future and not self._close_future.done():
                     self._close_future.set_result(None)
 
-                self._log_debug_with_thread(
-                    "encountered exception on background thread after initialization %s", str(e)
-                )
+                self._log_debug_with_thread("wait for remaining tasks on background thread to complete")
+
+                deadline = asyncio.get_event_loop().time() + 5
+                while asyncio.get_event_loop().time() < deadline:
+                    await asyncio.sleep(0)
+                    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
+                    if not pending:
+                        break
+                    await asyncio.wait(
+                        pending,
+                        timeout=max(0, deadline - asyncio.get_event_loop().time()),
+                    )
 
     # Raise an exception if the underlying client raises an exception in a message
     # This happens when the underlying client has an http timeout error
@@ -1593,6 +1634,7 @@ class MCPClient(ToolProvider):
         self._background_thread_event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._background_thread_event_loop)
         self._background_thread_event_loop.run_until_complete(self._async_background_thread())
+        self._log_debug_with_thread("background task event loop finished")
 
     def map_mcp_content_to_tool_result_content(
         self,
@@ -1750,13 +1792,17 @@ class MCPClient(ToolProvider):
         try:
             cancellation: Coroutine[Any, Any, Any]
             if task_id := cancellation_state.get("task_id"):
-                cancellation = self._cancel_task_async(task_id) if MCP_V2 else session.experimental.cancel_task(task_id)
+                if MCP_V2:
+                    cancellation = self._cancel_task_async(task_id)
+                else:
+                    cancellation = session.experimental.cancel_task(task_id)  # type: ignore[attr-defined]
             elif (request_id := cancellation_state.get("request_id")) is not None:
                 cancellation = session.send_notification(
                     ClientNotification(
-                        CancelledNotification(
+                        CancelledNotification(  # type: ignore[operator]
                             params=CancelledNotificationParams(
-                                requestId=request_id, reason="Strands agent invocation cancelled"
+                                requestId=request_id,  # type: ignore[call-arg]
+                                reason="Strands agent invocation cancelled",
                             )
                         )
                     )
@@ -1950,7 +1996,7 @@ class MCPClient(ToolProvider):
             return self._has_server_task_support()
 
         # Local import to avoid errors on old SDK versions that don't support Tasks
-        from mcp.types import TASK_OPTIONAL, TASK_REQUIRED
+        from mcp.types import TASK_OPTIONAL, TASK_REQUIRED  # type: ignore[attr-defined]
 
         # Server capability check (per MCP spec)
         if not self._has_server_task_support():
@@ -1977,7 +2023,7 @@ class MCPClient(ToolProvider):
         Returns:
             MCPCallToolResult with isError=True and the message as text content.
         """
-        return MCPCallToolResult(
+        return MCPCallToolResult(  # type: ignore[call-arg]
             isError=True,
             content=[MCPTextContent(type="text", text=message)],
         )
@@ -2309,7 +2355,12 @@ class MCPClient(ToolProvider):
             MCPCallToolResult: The final tool result after task completion.
         """
         # Local import to avoid errors on old SDK versions that don't support Tasks
-        from mcp.types import TASK_STATUS_CANCELLED, TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, GetTaskResult
+        from mcp.types import (  # type: ignore[attr-defined]
+            TASK_STATUS_CANCELLED,
+            TASK_STATUS_COMPLETED,
+            TASK_STATUS_FAILED,
+            GetTaskResult,
+        )
 
         session = cast(ClientSession, self._background_thread_session)
 
@@ -2323,7 +2374,7 @@ class MCPClient(ToolProvider):
         if cancellation_state is not None:
             cancellation_state["session"] = session
         create_task = asyncio.create_task(
-            session.experimental.call_tool_as_task(
+            session.experimental.call_tool_as_task(  # type: ignore[attr-defined]
                 name=name,
                 arguments=arguments,
                 ttl=ttl_ms,
@@ -2366,7 +2417,7 @@ class MCPClient(ToolProvider):
         async def _poll_until_terminal() -> GetTaskResult | None:
             """Inner function to poll task status until terminal state."""
             final = None
-            async for task in session.experimental.poll_task(task_id):
+            async for task in session.experimental.poll_task(task_id):  # type: ignore[attr-defined]
                 self._log_debug_with_thread(
                     "tool=<%s>, task_id=<%s>, status=<%s> | task status update",
                     name,
@@ -2395,7 +2446,7 @@ class MCPClient(ToolProvider):
             return self._create_task_error_result(f"Task {task_id} polling completed without status")
 
         if final_status.status == TASK_STATUS_FAILED:
-            error_msg = final_status.statusMessage or "Task failed"
+            error_msg = final_status.statusMessage or "Task failed"  # type: ignore[attr-defined]
             self._log_debug_with_thread("tool=<%s>, task_id=<%s>, error=<%s> | task failed", name, task_id, error_msg)
             return self._create_task_error_result(error_msg)
 
@@ -2407,9 +2458,10 @@ class MCPClient(ToolProvider):
         if final_status.status == TASK_STATUS_COMPLETED:
             self._log_debug_with_thread("tool=<%s>, task_id=<%s> | task completed, fetching result", name, task_id)
             try:
-                result = await session.experimental.get_task_result(task_id, MCPCallToolResult)
+                experimental_session = session.experimental  # type: ignore[attr-defined]
+                result = await experimental_session.get_task_result(task_id, MCPCallToolResult)
                 self._log_debug_with_thread("tool=<%s>, task_id=<%s> | task result retrieved", name, task_id)
-                return result
+                return result  # type: ignore[no-any-return]
             except Exception as e:
                 # Handle race condition: task completed but result retrieval failed
                 # (e.g., result expired, network error, server restarted)
@@ -2546,7 +2598,9 @@ def _load_servers_mapping(config: str | dict[str, Any]) -> dict[str, Any]:
     return servers
 
 
-def _build_client_from_config(name: str, server: dict[str, Any]) -> MCPClient:
+def _build_client_from_config(
+    name: str, server: dict[str, Any], continue_on_error: bool, prefix_with_server_name: bool
+) -> MCPClient:
     """Build a single MCPClient from one server entry.
 
     Interpolates ``${VAR}`` references first so secrets can live in the environment, then detects
@@ -2570,11 +2624,16 @@ def _build_client_from_config(name: str, server: dict[str, Any]) -> MCPClient:
         transport_callable,
         startup_timeout=server.get("startup_timeout", 30),
         tool_filters=_parse_config_tool_filters(name, server.get("tool_filters")),
-        prefix=server.get("prefix"),
+        prefix=server.get("prefix", _sanitize_prefix(name) if prefix_with_server_name else None),
         application_name=server.get("application_name", name),
         application_version=server.get("application_version"),
-        continue_on_error=server.get("continue_on_error", False),
+        continue_on_error=server.get("continue_on_error", continue_on_error),
     )
+
+
+def _sanitize_prefix(name: str) -> str:
+    """Replace characters that model providers reject in tool names (e.g. the dot in ``awslabs.foo``) with ``_``."""
+    return re.sub(r"[^A-Za-z0-9_-]", "_", name)
 
 
 def _config_transport_callable(name: str, transport: str, server: dict[str, Any]) -> Callable[[], MCPTransport]:
@@ -2596,7 +2655,7 @@ def _config_transport_callable(name: str, transport: str, server: dict[str, Any]
                 env=server.get("env"),
                 cwd=os.path.expanduser(server["cwd"]) if server.get("cwd") else None,
             )
-            return lambda: stdio_client(params)
+            return lambda: stdio_client(params)  # type: ignore[return-value]
 
         case "streamable-http":
             url = server.get("url")
